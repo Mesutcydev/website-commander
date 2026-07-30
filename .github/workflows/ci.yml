@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Build + test (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app || sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build app (no signing)
+        run: |
+          xcodebuild -project WebsiteCommander.xcodeproj -scheme WebsiteCommander \
+            -configuration Debug -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Build wc CLI (no signing)
+        run: |
+          xcodebuild -project WebsiteCommander.xcodeproj -scheme wc \
+            -configuration Debug -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Unit tests
+        run: |
+          xcodebuild -project WebsiteCommander.xcodeproj -scheme WebsiteCommander \
+            -configuration Debug -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO test
+
+      - name: wc CLI smoke test
+        run: |
+          WC=$(find ~/Library/Developer/Xcode/DerivedData -type f -name wc -path '*Debug*' | head -1)
+          test -x "$WC"
+          "$WC" help >/dev/null
+          "$WC" providers | grep -q '"openai"'
+          echo "wc smoke OK"

@@ -1,0 +1,90 @@
+name: WebsiteCommander
+options:
+  bundleIdPrefix: uk.mesut
+  developmentLanguage: en
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Swift 5 language mode keeps the @MainActor / ObservableObject patterns simple
+    # and avoids Swift 6 strict-concurrency churn across the ported engine code.
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: YES
+    ENABLE_HARDENED_RUNTIME: YES
+targets:
+  WebsiteCommander:
+    type: application
+    platform: macOS
+    sources:
+      - path: WebsiteCommander
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.mesut.WebsiteCommander
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleDisplayName: Website Commander
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Open source — MIT License"
+        CODE_SIGN_ENTITLEMENTS: WebsiteCommander/Resources/WebsiteCommander.entitlements
+        # Distributed from the developer's website, not the App Store: no sandbox,
+        # so the app can spawn `git` and the `code` CLI and manage local clones.
+        ENABLE_APP_SANDBOX: NO
+      configs:
+        # Testability only for Debug so @testable import works in the unit-test
+        # target; Release builds (the distributed app) stay uninstrumented.
+        Debug:
+          ENABLE_TESTABILITY: YES
+  # Headless CLI so other agents/scripts can drive Website Commander. Shares the
+  # core (Models/Services/Providers/Engine) with the app; excludes all UI.
+  wc:
+    type: tool
+    platform: macOS
+    sources:
+      - path: WebsiteCommander/Models
+      - path: WebsiteCommander/Services
+      - path: WebsiteCommander/Providers
+      - path: WebsiteCommander/Engine
+      - path: CLI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.mesut.WebsiteCommander.cli
+        PRODUCT_NAME: wc
+        CODE_SIGN_ENTITLEMENTS: ""
+  # Unit tests for the pure, safety-critical logic (remote parsing, diffing,
+  # prompt-injection defense, SVG path parsing). Guards every change so the
+  # app keeps functioning.
+  WebsiteCommanderTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: WebsiteCommander
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.mesut.WebsiteCommanderTests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: ""
+schemes:
+  WebsiteCommander:
+    build:
+      targets:
+        WebsiteCommander: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - WebsiteCommanderTests
+    archive:
+      config: Release
+  wc:
+    build:
+      targets:
+        wc: all
+    run:
+      config: Debug

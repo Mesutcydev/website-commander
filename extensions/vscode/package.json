@@ -1,0 +1,45 @@
+{
+  "name": "website-commander",
+  "displayName": "Website Commander",
+  "description": "Drive the Website Commander macOS app from VS Code: send the editor/selection to the agent, or pull a debug brief for the current site.",
+  "version": "0.1.0",
+  "publisher": "mesut",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "repository": { "type": "git", "url": "https://github.com/yourname/website-commander" },
+  "main": "./out/extension.js",
+  "activationEvents": ["onCommand:websiteCommander.sendSelection", "onCommand:websiteCommander.debugSite", "onCommand:websiteCommander.listSites"],
+  "contributes": {
+    "commands": [
+      { "command": "websiteCommander.sendSelection", "title": "Website Commander: Send selection to agent" },
+      { "command": "websiteCommander.debugSite", "title": "Website Commander: Debug current site" },
+      { "command": "websiteCommander.listSites", "title": "Website Commander: List sites" }
+    ],
+    "configuration": {
+      "title": "Website Commander",
+      "properties": {
+        "websiteCommander.supportDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Override the app's support dir (where `bridge.token`/`bridge.port` live). Leave empty for the default `~/Library/Application Support/WebsiteCommander`."
+        },
+        "websiteCommander.site": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Site name or `owner/repo` to target. Leave empty to use the app's active site (you'll be prompted if needed)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
