@@ -12,34 +12,29 @@ struct CommandCenterView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let gutter = AgentWorkspaceMetrics.gutter(for: proxy.size.width)
+            let metrics = AgentWorkspaceMetrics(width: proxy.size.width)
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     header
                     if settings.activeWorkspace == nil {
                         noSiteCard
                     } else {
-                        statsGrid
-                        quickActions
-                        recommendations
+                        statsGrid(metrics)
+                        quickActions(metrics)
+                        recommendations(metrics)
                         recentActivity
                     }
                 }
-                .padding(.horizontal, gutter)
-                .padding(.top, 20)
-                .padding(.bottom, 20)
+                .padding(.horizontal, metrics.paddingX)
+                .padding(.top, metrics.paddingTop)
+                .padding(.bottom, metrics.paddingBottom)
                 // No centered page wrapper: the dashboard uses the whole
                 // workspace, on the same gutter as every other destination.
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         }
-        .background {
-            ZStack {
-                Theme.canvas
-                Theme.brandWash.opacity(0.07)
-            }
-        }
+        .background(Theme.canvas)
         .task(id: settings.activeWorkspace?.id) { await loadCommits() }
     }
 
@@ -49,15 +44,15 @@ struct CommandCenterView: View {
         HStack(alignment: .center, spacing: Theme.Space.m) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(greeting)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Theme.accent)
-                    .textCase(.uppercase)
+                    .font(Theme.ui(11.5, .semibold))
+                    .foregroundStyle(Theme.tertiaryText)
                 Text(settings.activeWorkspace?.name ?? "Website Commander")
                     .font(.system(size: 27, weight: .semibold))
             }
             Spacer()
             if let ws = settings.activeWorkspace {
-                Badge(text: ws.deployment.rawValue, systemImage: ws.deployment.icon, tint: Theme.accentDeep)
+                Badge(text: ws.deployment.rawValue, systemImage: ws.deployment.icon,
+                      tint: Theme.tertiaryText, surface: Theme.secondarySurface)
             }
         }
     }
@@ -71,10 +66,20 @@ struct CommandCenterView: View {
         }
     }
 
+    // MARK: Grid
+
+    /// Flexible columns on the shared card gap, so a row of cards resolves to
+    /// exactly the same left and right edges as the full-width sections.
+    private func columns(_ count: Int) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(minimum: 0), spacing: Theme.Space.m),
+              count: max(1, count))
+    }
+
     // MARK: Stats
 
-    private var statsGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: Theme.Space.m)],
+    private func statsGrid(_ metrics: AgentWorkspaceMetrics) -> some View {
+        LazyVGrid(columns: columns(metrics.statColumns),
+                  alignment: .leading,
                   spacing: Theme.Space.m) {
             StatTile(title: "Connected Sites", value: "\(settings.workspaces.count)",
                      systemImage: "folder.fill", tint: Theme.accent)
@@ -109,10 +114,11 @@ struct CommandCenterView: View {
 
     // MARK: Quick actions
 
-    private var quickActions: some View {
+    private func quickActions(_ metrics: AgentWorkspaceMetrics) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
             SectionHeader(title: "Quick Actions", systemImage: "bolt.fill")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: Theme.Space.m)],
+            LazyVGrid(columns: columns(metrics.quickActionColumns),
+                      alignment: .leading,
                       spacing: Theme.Space.m) {
                 ActionCard(title: "New Chat", subtitle: "Talk to the agent",
                            systemImage: "bubble.left.fill", tint: Theme.accent) {
@@ -148,20 +154,19 @@ struct CommandCenterView: View {
         ("Add a project", "Add a new project entry to the portfolio section.", "square.stack.3d.up")
     ]
 
-    private var recommendations: some View {
+    private func recommendations(_ metrics: AgentWorkspaceMetrics) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
             SectionHeader(title: "Ask the Agent", systemImage: "sparkles")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.Space.m) {
-                    ForEach(suggestions, id: \.title) { item in
-                        SuggestionCard(title: item.title, icon: item.icon) {
-                            engine.prefilledPrompt = item.prompt
-                            engine.newChat()
-                            destination.wrappedValue = .agent
-                        }
+            LazyVGrid(columns: columns(metrics.suggestionColumns),
+                      alignment: .leading,
+                      spacing: Theme.Space.m) {
+                ForEach(suggestions, id: \.title) { item in
+                    SuggestionCard(title: item.title, icon: item.icon) {
+                        engine.prefilledPrompt = item.prompt
+                        engine.newChat()
+                        destination.wrappedValue = .agent
                     }
                 }
-                .padding(.vertical, 2)
             }
         }
     }
@@ -260,18 +265,22 @@ struct SuggestionCard: View {
         Button(action: action) {
             HStack(spacing: Theme.Space.s) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.violet)
                     .frame(width: 32, height: 32)
-                    .background(Theme.brandGradient, in: RoundedRectangle(cornerRadius: 9))
+                    .background(Theme.violetSoft,
+                                in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 Text(LocalizedStringKey(title))
                     .font(.callout.weight(.medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, Theme.Space.m)
             .padding(.vertical, Theme.Space.s + 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.cardFill, in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
+            .overlay(Capsule().strokeBorder(Theme.borderSubtle, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -285,7 +294,7 @@ struct CommitRow: View {
     var body: some View {
         HStack(spacing: Theme.Space.m) {
             Image(systemName: "arrow.triangle.branch")
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.tertiaryText)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(commit.message.split(separator: "\n").first.map(String.init) ?? commit.message)

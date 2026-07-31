@@ -410,12 +410,12 @@ struct PreviewView: View {
                     .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
                     .overlay(RoundedRectangle(cornerRadius: 22)
-                        .strokeBorder(Theme.hairline, lineWidth: 1))
+                        .strokeBorder(Theme.borderSubtle, lineWidth: 1))
                     .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
                     .padding(Theme.Space.xl)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.primary.opacity(0.03))
+            .background(Theme.canvas)
             .overlay(alignment: .top) {
                 inspectModeBanner
             }
@@ -490,7 +490,7 @@ struct InspectorPanel: View {
                 }
             }
         }
-        .background(Theme.panelFill)
+        .background(Theme.elevatedSurface)
     }
 }
 
@@ -512,7 +512,8 @@ private struct ConsolePanel: View {
                     Text("<\(element.tag)>")
                         .font(.system(.caption, design: .monospaced))
                         .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Theme.accent.opacity(0.15), in: Capsule())
+                        .foregroundStyle(Theme.accent)
+                        .background(Theme.accentSoft, in: Capsule())
                 }
             }
             .padding(.horizontal, Theme.Space.m).padding(.vertical, 6)

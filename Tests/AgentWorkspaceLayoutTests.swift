@@ -37,10 +37,9 @@ final class AgentWorkspaceLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(AgentWorkspaceMetrics(width: 1360).paddingTop, 24)
     }
 
+    /// One bar, one compact height — and one place that owns it.
     func testToolbarStaysCompact() {
-        XCTAssertLessThanOrEqual(Theme.Chrome.Metrics.toolbarHeight, 72)
-        // One source of truth: the legacy token resolves to the shell's bar.
-        XCTAssertEqual(Theme.Chrome.Metrics.toolbarHeight, TopBarMetrics.height)
+        XCTAssertLessThanOrEqual(TopBarMetrics.height, 72)
     }
 
     // MARK: Smart tasks grid
@@ -69,6 +68,66 @@ final class AgentWorkspaceLayoutTests: XCTestCase {
         let cardWidth = (metrics.contentWidth - gaps) / CGFloat(metrics.taskColumns)
         XCTAssertEqual(cardWidth * 4 + gaps, metrics.contentWidth, accuracy: 0.01)
         XCTAssertGreaterThan(cardWidth, 300, "cards should be roomy at 1600pt, not 190pt")
+    }
+
+    // MARK: Command Center rows
+
+    func testCommandCenterColumnsStepThroughDeliberateBreakpoints() {
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 1600).statColumns, 4)
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 840).statColumns, 4)
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 800).statColumns, 2)
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 480).statColumns, 1)
+
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 1600).quickActionColumns, 5)
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 760).quickActionColumns, 5)
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 600).quickActionColumns, 3)
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 480).quickActionColumns, 2)
+
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 1600).suggestionColumns, 4)
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 840).suggestionColumns, 4)
+        XCTAssertEqual(AgentWorkspaceMetrics(width: 800).suggestionColumns, 2)
+    }
+
+    /// A four-card row is only kept while each card holds a readable measure —
+    /// the chips truncate below roughly 190pt.
+    func testFourUpRowsOnlySurviveWhileCardsStayReadable() {
+        let metrics = AgentWorkspaceMetrics(width: AgentWorkspaceMetrics.fourUpBreakpoint)
+        let cardWidth = (metrics.contentWidth - 3 * metrics.cardGap) / 4
+        XCTAssertGreaterThanOrEqual(cardWidth, 190)
+    }
+
+    /// The five quick actions stay a single whole row at every width the window
+    /// can actually reach, so the row never ends short of the gutter.
+    func testQuickActionsFillOneRowDownToTheWindowMinimum() {
+        for width in [760.0, 900.0, 1024.0, 1280.0, 1600.0] as [CGFloat] {
+            XCTAssertEqual(AgentWorkspaceMetrics(width: width).quickActionColumns, 5,
+                           "quick actions should stay one row at \(width)pt")
+        }
+    }
+
+    /// Every dashboard row is flexible, so its cards plus gaps account for the
+    /// whole content width — the ragged trailing space of an adaptive grid is
+    /// what made the page look tilted to the left.
+    func testCommandCenterRowsConsumeTheFullContentWidth() {
+        for width in [760.0, 900.0, 1024.0, 1280.0, 1600.0] as [CGFloat] {
+            let metrics = AgentWorkspaceMetrics(width: width)
+            for count in [metrics.statColumns, metrics.quickActionColumns, metrics.suggestionColumns] {
+                let gaps = CGFloat(count - 1) * metrics.cardGap
+                let cardWidth = (metrics.contentWidth - gaps) / CGFloat(count)
+                XCTAssertEqual(cardWidth * CGFloat(count) + gaps, metrics.contentWidth, accuracy: 0.01)
+                XCTAssertGreaterThan(cardWidth, 130,
+                                     "cards should stay comfortable at \(width)pt")
+            }
+        }
+    }
+
+    /// Card rows and the full-width sections below them share one gutter, so
+    /// every section resolves to the same left and right edge.
+    func testDashboardSectionsShareTheShellGutter() {
+        for width in [760.0, 1024.0, 1600.0] as [CGFloat] {
+            XCTAssertEqual(AgentWorkspaceMetrics(width: width).paddingX,
+                           AgentWorkspaceMetrics.gutter(for: width), accuracy: 0.001)
+        }
     }
 
     // MARK: Execution rail

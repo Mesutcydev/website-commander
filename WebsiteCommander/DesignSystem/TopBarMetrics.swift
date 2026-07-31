@@ -245,12 +245,19 @@ struct TopBarMetrics: Equatable {
     static let navigationItemGap: CGFloat = 2
     static let navigationContainerPadding: CGFloat = 3
 
+    /// One destination cell's fixed width, measured at the *selected* weight —
+    /// the widest the label can be. Cells are sized rather than padded so
+    /// changing destination cannot resize the row or shift its neighbours.
+    static func navigationItemWidth(for item: Destination) -> CGFloat {
+        navigationIconSize + 6
+            + Theme.Typography.width(item.barLabel, size: 13, weight: .semibold)
+            + navigationItemPaddingX * 2
+    }
+
     /// The five-item destination row at its true rendered width.
     static var destinationRowWidth: CGFloat {
         let items = Destination.allCases.reduce(CGFloat.zero) { total, item in
-            total + navigationIconSize + 6
-                + Theme.Typography.width(item.barLabel, size: 13, weight: .medium)
-                + navigationItemPaddingX * 2
+            total + navigationItemWidth(for: item)
         }
         let gaps = CGFloat(max(0, Destination.allCases.count - 1)) * navigationItemGap
         return items + gaps + navigationContainerPadding * 2

@@ -31,39 +31,39 @@ struct OnDeviceSettingsTab: View {
     }
 
     var body: some View {
-        Form {
-            Section {
-                Label {
-                    VStack(alignment: .leading, spacing: 3) {
+        SettingsPage {
+            SettingsSection(title: "Apple Intelligence") {
+                HStack(spacing: Theme.Space.m) {
+                    IconTile(systemImage: available ? "checkmark.seal.fill" : "xmark.seal.fill",
+                             accent: available ? .green : .amber,
+                             size: 32)
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(available ? "Available" : "Unavailable")
-                            .font(.body.weight(.semibold))
-                        Text(reason).font(.caption).foregroundStyle(.secondary)
+                            .font(Theme.ui(13, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(LocalizedStringKey(reason))
+                            .font(Theme.ui(11))
+                            .foregroundStyle(Theme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                } icon: {
-                    Image(systemName: available ? "checkmark.seal.fill" : "xmark.seal.fill")
-                        .foregroundStyle(available ? Theme.success : Theme.warning)
+                    Spacer(minLength: 0)
                 }
             }
-            Section {
-                Toggle("Prefer on-device when available", isOn: $settings.preferOnDevice)
+
+            SettingsSection(title: "Routing") {
+                SettingsToggleRow(
+                    title: "Prefer on-device when available",
+                    detail: "When on, the agent runs entirely on this Mac — no network, no API key, no usage cost. Your cloud provider is used again the moment you switch this off.",
+                    isOn: $settings.preferOnDevice)
                     .disabled(!available)
-                Text("When on, the agent runs entirely on this Mac — no network, no API key, no usage cost. Your cloud provider is used again the moment you switch this off.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } header: {
-                Text("Routing")
             }
-            Section {
-                Label("On-device models are text-only. The agent's live-page screenshot falls back to a text snapshot when running on-device.",
-                      systemImage: "eye.slash")
-                    .font(.caption).foregroundStyle(.secondary)
-                Label("There is no model to download or pick: Foundation Models is a single system model managed by macOS.",
-                      systemImage: "info.circle")
-                    .font(.caption).foregroundStyle(.secondary)
-            } header: {
-                Text("Good to know")
+
+            SettingsSection(title: "Good to know") {
+                SettingsStatusLine(text: "On-device models are text-only. The agent's live-page screenshot falls back to a text snapshot when running on-device.",
+                                   systemImage: "eye.slash")
+                SettingsStatusLine(text: "There is no model to download or pick: Foundation Models is a single system model managed by macOS.",
+                                   systemImage: "info.circle")
             }
         }
-        .formStyle(.grouped)
-        .padding(Theme.Space.l)
     }
 }

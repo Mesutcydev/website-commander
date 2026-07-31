@@ -176,6 +176,9 @@ struct TopBarProjectPopover: View {
                         }
                     }
                     .frame(maxHeight: maxHeight)
+                    // A scroll view is greedy: without this it claims the whole
+                    // cap and leaves a dead band under a short list.
+                    .fixedSize(horizontal: false, vertical: true)
                     .scrollBounceBehavior(.basedOnSize)
                 }
 

@@ -60,7 +60,7 @@ struct DebugBriefSheet: View {
     private var header: some View {
         HStack(spacing: Theme.Space.l) {
             ZStack {
-                Circle().stroke(Theme.hairline, lineWidth: 8)
+                Circle().stroke(Theme.borderSubtle, lineWidth: 8)
                 Circle()
                     .trim(from: 0, to: CGFloat(brief?.healthScore ?? 0) / 100)
                     .stroke(scoreTint, style: StrokeStyle(lineWidth: 8, lineCap: .round))
@@ -92,7 +92,7 @@ struct DebugBriefSheet: View {
             .labelStyle(.iconOnly)
             .buttonStyle(.plain)
             .background(Theme.cardFill, in: Circle())
-            .overlay(Circle().stroke(Theme.hairline, lineWidth: 1))
+            .overlay(Circle().stroke(Theme.borderSubtle, lineWidth: 1))
             .help("Close Debug Brief (Esc)")
             .keyboardShortcut(.cancelAction)
         }

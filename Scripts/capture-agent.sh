@@ -16,10 +16,13 @@ if [ ! -x "$HELPER" ] || [ "$SCRIPT_DIR/window-id.swift" -nt "$HELPER" ]; then
   swiftc -O -o "$HELPER" "$SCRIPT_DIR/window-id.swift"
 fi
 
+# SwiftUI keeps a hidden anchor window around once a popover has been shown, and
+# it can sort ahead of the real one — so target the standard window explicitly.
 osascript <<EOF >/dev/null
 tell application "System Events" to tell application process "WebsiteCommander"
-  set position of window 1 to {20, 40}
-  set size of window 1 to {$W, $H}
+  set win to first window whose subrole is "AXStandardWindow"
+  set position of win to {20, 40}
+  set size of win to {$W, $H}
 end tell
 EOF
 sleep 1

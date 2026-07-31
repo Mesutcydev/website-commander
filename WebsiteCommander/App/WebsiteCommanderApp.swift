@@ -54,6 +54,7 @@ struct WebsiteCommanderApp: App {
                 .task {
                     cloudSync.startObserving(settings: settings)
                     cloudSync.pull(into: settings)
+                    engine.restoreLastConversationIfNeeded()
                     if settings.localBridgeEnabled {
                         bridge.start(preferredPort: settings.localBridgePort)
                     }
@@ -81,9 +82,9 @@ struct WebsiteCommanderApp: App {
             }
             CommandGroup(after: .appInfo) {
                 Button(updater.checking ? "Checking for Updates…" : "Check for Updates…") {
-                    Task { await updater.check(feedURL: settings.updateFeedURL) }
+                    Task { await updater.check(feedURL: settings.updateFeedURL, userInitiated: true) }
                 }
-                .disabled(updater.checking)
+                .disabled(updater.checking || updater.installing)
             }
             CommandMenu("Site") {
                 Button("Open in VSCode") { NotificationCenter.default.post(name: .openInVSCode, object: nil) }
@@ -102,8 +103,10 @@ struct WebsiteCommanderApp: App {
                 .environmentObject(cloudSync)
                 .environmentObject(bridge)
                 .environmentObject(updater)
-                .frame(width: 620, height: 560)
+                // No height here: the window sizes to the selected page (see
+                // `SettingsMetrics`), so a short form doesn't leave dead space.
                 .preferredColorScheme(settings.themeMode.colorScheme)
+                .tint(Theme.accent)
         }
     }
 }

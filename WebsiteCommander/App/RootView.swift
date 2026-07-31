@@ -24,11 +24,13 @@ struct RootView: View {
 
     @State private var destination: Destination? = .commandCenter
     @State private var shellSize: CGSize = .zero
+    @State private var openPopover: TopBarPopoverKind?
     @State private var showDebug = false
     @State private var showPalette = false
     @State private var showConversations = false
     @State private var showUpdateAlert = false
     @State private var showUpdateError = false
+    @State private var showUpToDate = false
 
     private var current: Destination { destination ?? .commandCenter }
 
@@ -101,9 +103,18 @@ struct RootView: View {
         }
         .onChange(of: updater.available) { _, new in if new != nil { showUpdateAlert = true } }
         .onChange(of: updater.lastError) { _, new in
-            if new != nil && updater.available == nil { showUpdateError = true }
+            if new != nil && updater.available == nil && !updater.installing { showUpdateError = true }
+        }
+        .onChange(of: updater.upToDate) { _, isCurrent in
+            if isCurrent { showUpToDate = true }
         }
         .alert("Update available", isPresented: $showUpdateAlert, presenting: updater.available) { rel in
+            if canInstall(rel) {
+                Button(updater.installing ? "Installing…" : "Install & Relaunch") {
+                    Task { await updater.installAndRelaunch(rel) }
+                }
+                .disabled(updater.installing)
+            }
             if !rel.url.isEmpty {
                 Button("Download \(rel.version)") {
                     if let u = URL(string: rel.url) { NSWorkspace.shared.open(u) }
@@ -111,13 +122,33 @@ struct RootView: View {
             }
             Button("Later", role: .cancel) { updater.available = nil }
         } message: { rel in
-            Text(rel.notes.isEmpty ? "Version \(rel.version) is available." : rel.notes)
+            let body = rel.notes.isEmpty ? "Version \(rel.version) is available." : rel.notes
+            if canInstall(rel) {
+                Text("\(body)\n\nInstall verifies the ZIP checksum, replaces this app, and relaunches. No Apple Developer account required.")
+            } else {
+                Text(body)
+            }
+        }
+        .alert("You're up to date", isPresented: $showUpToDate) {
+            Button("OK", role: .cancel) { updater.upToDate = false }
+        } message: {
+            Text("Website Commander \(UpdateChecker.currentVersion) is the latest release.")
         }
         .alert("Couldn't check for updates", isPresented: $showUpdateError) {
             Button("OK", role: .cancel) { updater.lastError = nil }
         } message: {
             Text(updater.lastError ?? "")
         }
+        .task(id: settings.hasCompletedOnboarding) {
+            guard settings.hasCompletedOnboarding else { return }
+            // One quiet check after launch — never polls, never errors loudly.
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            await updater.check(feedURL: settings.updateFeedURL, userInitiated: false)
+        }
+    }
+
+    private func canInstall(_ rel: UpdateChecker.Release) -> Bool {
+        rel.sha256.count == 64 && rel.url.lowercased().hasSuffix(".zip")
     }
 
     // MARK: App shell
@@ -129,11 +160,22 @@ struct RootView: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 TopBar(
                     metrics: metrics,
+                    destination: destinationBinding,
+                    showsPreview: $showsPreview,
+                    showsViewControls: current == .agent,
+                    openPopover: $openPopover
+                )
+            }
+            // The bar's menus are drawn here, not inside the bar: this overlay
+            // spans the whole window, so an open popover is above the workspace
+            // for hit-testing as well as for drawing.
+            .overlayPreferenceValue(TopBarTriggerAnchorKey.self) { anchors in
+                TopBarPopoverLayer(
+                    metrics: metrics,
                     shellSize: shellSize,
-                    destination: Binding(
-                        get: { current },
-                        set: { destination = $0 }
-                    ),
+                    anchors: anchors,
+                    open: $openPopover,
+                    destination: destinationBinding,
                     showsPreview: $showsPreview,
                     showsViewControls: current == .agent
                 )
@@ -141,12 +183,24 @@ struct RootView: View {
             .background {
                 GeometryReader { proxy in
                     Color.clear
-                        .onAppear { shellSize = proxy.size }
-                        .onChange(of: proxy.size) { _, size in shellSize = size }
+                        // Defer size→state writes so AppKit is not asked for
+                        // another constraints pass while still inside one.
+                        .onAppear {
+                            DispatchQueue.main.async { shellSize = proxy.size }
+                        }
+                        .onChange(of: proxy.size) { _, size in
+                            DispatchQueue.main.async { shellSize = size }
+                        }
                 }
             }
-            .toolbar(.hidden, for: .windowToolbar)
+            // No `.toolbar(.hidden, for: .windowToolbar)`: with a hidden titlebar
+            // there is no toolbar to hide, and asking SwiftUI to hide it takes
+            // the window's traffic lights with it.
             .ignoresSafeArea(.container, edges: .top)
+    }
+
+    private var destinationBinding: Binding<Destination> {
+        Binding(get: { current }, set: { destination = $0 })
     }
 
     /// The workspace fills everything under the bar. Each destination owns its

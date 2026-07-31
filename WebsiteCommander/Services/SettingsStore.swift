@@ -95,8 +95,10 @@ final class SettingsStore: ObservableObject {
     /// machines without Foundation Models.
     @Published var preferOnDevice: Bool = false { didSet { save() } }
 
-    /// Update feed URL (https, or http on loopback for testing). Empty = the
-    /// "Check for Updates" command is inert. No background polling ever.
+    /// Optional override for the update feed URL. Empty means use
+    /// `UpdateChecker.defaultFeedURL` (`https://mesut.uk/wc-update.json`).
+    /// Checks run once shortly after launch and when the user asks — never as
+    /// background polling.
     @Published var updateFeedURL: String = "" { didSet { save() } }
 
     /// Called after every persist; the app wires this to CloudSyncService.push.

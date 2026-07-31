@@ -74,12 +74,50 @@ struct AgentWorkspaceMetrics: Equatable {
 
     var taskCardMinHeight: CGFloat { isNarrow ? 100 : 112 }
 
+    // MARK: Command Center rows
+
+    /// The dashboard's card rows use the same idea as `taskColumns`: a chosen
+    /// count per width with flexible cards, so every row ends on the gutter
+    /// instead of leaving the ragged trailing space an adaptive grid produces.
+    /// Counts step down before a card would fall under a comfortable size.
+
+    /// Four status tiles: one row while a tile stays around 190pt, otherwise a
+    /// 2×2 block. Three columns would strand a single tile on its own row.
+    var statColumns: Int {
+        if width >= Self.fourUpBreakpoint { return 4 }
+        if width >= 560 { return 2 }
+        return 1
+    }
+
+    /// Five quick actions. The row stays whole down to the window's minimum
+    /// width: at 760pt the longest title wraps to two lines, which still reads
+    /// better than breaking five cards into a 3 + 2 block with a hole in it.
+    var quickActionColumns: Int {
+        if width >= 760 { return 5 }
+        if width >= 560 { return 3 }
+        if width >= 380 { return 2 }
+        return 1
+    }
+
+    /// Four prompt chips, on the same step as the status tiles so the two rows
+    /// agree at every width. Below it the chips pair up rather than truncate.
+    var suggestionColumns: Int {
+        if width >= Self.fourUpBreakpoint { return 4 }
+        if width >= 480 { return 2 }
+        return 1
+    }
+
+    /// Where a four-card row still gives each card a comfortable measure. Below
+    /// this the dashboard's four-item rows halve instead of tightening.
+    static let fourUpBreakpoint: CGFloat = 840
+
     // MARK: Readability caps
 
-    /// An ultra-wide readability cap only. It must stay above a 1600pt window
-    /// with the sidebar collapsed, otherwise the workspace leaves the blank
-    /// right-hand strip this layout exists to remove. Long prose is already
-    /// held to `proseWidth`, so the column itself can safely be this wide.
+    /// An ultra-wide readability cap only. It must stay above the widest window
+    /// a person is likely to use, or the workspace leaves the blank right-hand
+    /// strip this layout exists to remove — there is no sidebar taking width off
+    /// it any more. Long prose is already held to `proseWidth`, so the column
+    /// itself can safely be this wide.
     var maxColumnWidth: CGFloat { 1680 }
 
     /// Long assistant prose is held to a comfortable measure (~80 characters)

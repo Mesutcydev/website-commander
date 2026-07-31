@@ -60,7 +60,7 @@ struct AgentExecutionRail: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .background(Theme.raisedFill.opacity(0.55))
+        .background(Theme.secondarySurface.opacity(0.55))
         .overlay(alignment: .leading) {
             Rectangle()
                 .fill(Theme.borderSubtle)
@@ -169,7 +169,7 @@ struct AgentExecutionRail: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.panelFill.opacity(0.6),
+            .background(Theme.elevatedSurface.opacity(0.6),
                         in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }

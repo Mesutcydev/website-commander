@@ -139,8 +139,10 @@ struct WorkspaceCard: View {
             }
 
             HStack(spacing: Theme.Space.s) {
-                Badge(text: workspace.techStack.rawValue, systemImage: workspace.techStack.icon, tint: Theme.slateAccent)
-                Badge(text: workspace.deployment.rawValue, systemImage: workspace.deployment.icon, tint: Theme.slateAccent)
+                Badge(text: workspace.techStack.rawValue, systemImage: workspace.techStack.icon,
+                      tint: Theme.tertiaryText, surface: Theme.secondarySurface)
+                Badge(text: workspace.deployment.rawValue, systemImage: workspace.deployment.icon,
+                      tint: Theme.tertiaryText, surface: Theme.secondarySurface)
             }
 
             HStack(spacing: Theme.Space.s) {
@@ -173,7 +175,7 @@ struct WorkspaceCard: View {
         .overlay(alignment: .leading) {
             if isActive {
                 Capsule()
-                    .fill(Theme.brandGradient)
+                    .fill(Theme.accent)
                     .frame(width: 3)
                     .padding(.vertical, Theme.Space.m)
             }
@@ -199,7 +201,10 @@ struct WorkspaceCard: View {
 
                     if previewState == .loading {
                         ZStack {
-                            Color(nsColor: .windowBackgroundColor)
+                            // The same inset surface the failed state uses, so
+                            // the placeholder sits on the theme's ladder rather
+                            // than on AppKit's window grey.
+                            Theme.secondarySurface
                             ProgressView()
                                 .controlSize(.small)
                         }
@@ -207,7 +212,7 @@ struct WorkspaceCard: View {
 
                     if case .failed = previewState {
                         ZStack {
-                            Theme.brandWash
+                            Theme.secondarySurface
                             VStack(spacing: Theme.Space.s) {
                                 Image(systemName: "exclamationmark.icloud")
                                     .font(.title2)
@@ -241,7 +246,7 @@ struct WorkspaceCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
-                        .strokeBorder(Theme.hairline, lineWidth: 1)
+                        .strokeBorder(Theme.borderSubtle, lineWidth: 1)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
             }
@@ -249,7 +254,7 @@ struct WorkspaceCard: View {
             .help("Open \(workspace.name) in Preview")
         } else {
             ZStack {
-                Theme.brandWash
+                Theme.secondarySurface
                 VStack(spacing: Theme.Space.s) {
                     Image(systemName: "globe.badge.chevron.backward")
                         .font(.title2)

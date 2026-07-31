@@ -69,12 +69,15 @@ struct TopBarDivider: View {
 enum TopBarEmphasis {
     /// Invisible until hovered. For icon actions inside a group.
     case quiet
-    /// A resting translucent tint. For the project and model controls.
+    /// A resting translucent tint. For the project control.
     case resting
     /// The selected state inside a group: elevated surface + hairline.
     case selected
     /// The primary contextual action, using the product accent sparingly.
     case accent
+    /// A soft, permanently tinted identity for one control — the model
+    /// selector's violet. Carries its own hover and border tints.
+    case tinted(Theme.Accent)
     /// A restrained semantic treatment, e.g. Stop.
     case semantic(Color)
 }
@@ -111,6 +114,10 @@ struct TopBarControlSurface: View {
                         )
                 }
             }
+            // The selected surface is the one control that lifts off the bar,
+            // and it lifts by a hair — never by a coloured glow.
+            .shadow(color: showsInnerHighlight ? Theme.Shadow.ambient : .clear, radius: 1, y: 1)
+            .shadow(color: showsInnerHighlight ? Theme.Shadow.key : .clear, radius: 5, y: 2)
     }
 
     private var fill: AnyShapeStyle {
@@ -125,10 +132,16 @@ struct TopBarControlSurface: View {
             if isPressed { return AnyShapeStyle(Theme.Chrome.barControlPressed) }
             return AnyShapeStyle(Theme.Chrome.barControlActive)
         case .accent:
-            let base = isPressed ? Theme.Chrome.accentHover : Theme.Chrome.accent
-            return AnyShapeStyle(isHovering && !isPressed ? Theme.Chrome.accentHover : base)
+            let base = isPressed ? Theme.accentPressed : Theme.accent
+            return AnyShapeStyle(isHovering && !isPressed ? Theme.accentHover : base)
+        case .tinted(let accent):
+            // Rest is the accent's soft surface; hover and press strengthen it
+            // by layering the accent itself rather than fading the tint.
+            if isPressed { return AnyShapeStyle(accent.color.opacity(0.22)) }
+            if isHovering { return AnyShapeStyle(accent.color.opacity(0.15)) }
+            return AnyShapeStyle(accent.soft)
         case .semantic(let color):
-            return AnyShapeStyle(color.opacity(isPressed ? 0.26 : (isHovering ? 0.20 : 0.14)))
+            return AnyShapeStyle(color.opacity(isPressed ? 0.24 : (isHovering ? 0.18 : 0.12)))
         }
     }
 
@@ -138,7 +151,8 @@ struct TopBarControlSurface: View {
         case .resting: return Theme.Chrome.barControlBorder
         case .selected: return Theme.Chrome.barControlBorderActive
         case .accent: return nil
-        case .semantic(let color): return color.opacity(0.30)
+        case .tinted(let accent): return accent.color.opacity(0.22)
+        case .semantic(let color): return color.opacity(0.28)
         }
     }
 

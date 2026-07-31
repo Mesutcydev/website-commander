@@ -31,14 +31,11 @@ struct AgentWorkspaceView: View {
     @AppStorage("workspace.agentWidth") private var storedAgentWidth = 0.0
     @EnvironmentObject private var engine: AgentEngine
     @State private var dragStartWidth: CGFloat?
-    @State private var windowWidth: CGFloat = 0
 
     var body: some View {
         GeometryReader { proxy in
             workspaceBody(width: proxy.size.width)
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                .onAppear { windowWidth = proxy.size.width }
-                .onChange(of: proxy.size.width) { _, width in windowWidth = width }
         }
         .background(Theme.canvas)
         .onReceive(NotificationCenter.default.publisher(for: .requestAgentPreview)) { _ in
@@ -72,7 +69,7 @@ struct AgentWorkspaceView: View {
             showsToolbarControls: false
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.panelFill)
+        .background(Theme.workspaceSurface)
     }
 
     private func splitWorkspace(available: CGFloat) -> some View {
@@ -91,7 +88,7 @@ struct AgentWorkspaceView: View {
             )
             .frame(width: agentWidth)
             .frame(minWidth: WorkspaceLayout.agentMinimum, maxHeight: .infinity)
-            .background(Theme.panelFill)
+            .background(Theme.workspaceSurface)
 
             splitter(currentWidth: agentWidth, available: available)
 
@@ -102,11 +99,11 @@ struct AgentWorkspaceView: View {
 
     private func splitter(currentWidth: CGFloat, available: CGFloat) -> some View {
         Rectangle()
-            .fill(Theme.strongBorder)
+            .fill(Theme.secondarySurface)
             .frame(width: WorkspaceLayout.dividerWidth)
             .overlay {
                 Capsule()
-                    .fill(Theme.tertiaryText)
+                    .fill(Theme.borderStrong)
                     .frame(width: 2, height: 34)
             }
             .contentShape(Rectangle())

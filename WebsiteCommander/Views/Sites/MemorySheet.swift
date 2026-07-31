@@ -33,7 +33,7 @@ struct MemorySheet: View {
                     .frame(minHeight: 220)
                     .padding(6)
                     .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.medium).strokeBorder(Theme.hairline))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.medium).strokeBorder(Theme.borderSubtle))
             }
             .padding(Theme.Space.l)
             Divider()

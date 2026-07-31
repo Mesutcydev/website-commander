@@ -3,10 +3,34 @@ import AppKit
 
 /// The visual language of Website Commander.
 ///
-/// A calm, Mac-native palette built around a single "command" gradient
-/// (teal → indigo). Everything is driven by semantic tokens so views never hard
-/// code raw colors — swap the accent here and the whole app follows.
+/// The palette is deliberately **neutral**: canvas, chrome, cards, borders, and
+/// body text are true warm grays and charcoals, never desaturated navy. Colour
+/// is semantic punctuation on top of that — indigo for primary interaction and
+/// focus, violet for the model/AI controls, and a small closed set of accents
+/// (teal, green, amber, rose, cyan) for categories and status.
+///
+/// Dark is tuned for OLED: the canvas is true black so unlit pixels stay off,
+/// and everything above it is a near-black ladder with roughly even L* steps.
+/// Because a black shadow over a black canvas is invisible, separation in dark
+/// comes from those surface steps plus hairlines — not from elevation.
+///
+/// Every value lives here. Views read semantic tokens (`Theme.textSecondary`,
+/// `Theme.borderSubtle`, `Theme.Accent.violet`) so a palette change is one edit,
+/// and nothing downstream can reintroduce a one-off colour.
 enum Theme {
+
+    // MARK: Palette primitives
+
+    /// A token from a hex literal, so the palette below reads like the spec it
+    /// implements rather than a wall of float triples.
+    private static func srgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: alpha
+        )
+    }
 
     private static func adaptive(light: NSColor, dark: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
@@ -14,19 +38,111 @@ enum Theme {
         })
     }
 
-    // MARK: Accent
+    /// A token defined by two hex literals, one per appearance.
+    private static func tone(_ light: UInt32, _ dark: UInt32,
+                            lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1) -> Color {
+        adaptive(light: srgb(light, lightAlpha), dark: srgb(dark, darkAlpha))
+    }
 
-    /// Primary brand accent.
-    static let accent = Color(red: 0.357, green: 0.373, blue: 0.937) // #5B5FEF
-    /// Secondary accent that the brand gradient blends into.
-    static let accentDeep = Color(red: 0.345, green: 0.722, blue: 0.780) // #58B8C7
-    static let accentHover = Color(red: 0.408, green: 0.424, blue: 0.949)
-    static let accentPressed = Color(red: 0.306, green: 0.322, blue: 0.847)
-    static let slateAccent = Color(red: 0.494, green: 0.549, blue: 0.639)
-    static let accentSecondaryMuted = accentDeep.opacity(0.16)
+    // MARK: Primary interaction colour
 
-    /// The signature brand gradient, used for hero buttons, active sidebar
-    /// selection, and stat-tile highlights.
+    /// Indigo. Reserved for primary actions, focus rings, active controls, and
+    /// selection — never for borders, card fills, or body text.
+    static let accent = tone(0x5368E8, 0x7183E8)
+    static let accentHover = tone(0x465BD5, 0x8492F0)
+    static let accentPressed = tone(0x3E50BE, 0x5C6DD2)
+    /// A soft indigo surface for selected rows and quiet primary tiles. The dark
+    /// alpha is raised because it now composites over true black rather than a
+    /// near-black canvas, and a 20% tint there reads as almost nothing.
+    static let accentSoft = tone(0xEEF0FF, 0x5368E8, darkAlpha: 0.28)
+    static let accentBorder = tone(0xC9CFFF, 0x7183E8, darkAlpha: 0.38)
+
+    /// The teal the brand gradient blends into. Used by the logo and the one
+    /// branded gradient — not as a general-purpose accent.
+    static let accentDeep = tone(0x279B94, 0x43B5AC)
+
+    // MARK: Controlled accents
+    //
+    // A closed set. Each pair is a foreground for glyphs and small labels plus a
+    // soft tint for the container behind them, so an accent can identify a
+    // category without colouring a whole surface.
+    //
+    // The dark foregrounds are pulled down a few points of L* from their light
+    // counterparts' mirror: at 9–10:1 against true black a saturated hue blooms,
+    // and the extra brightness bought nothing. The dark soft alphas are tuned
+    // per hue so every tint lands in the same L*12–13 band over black — blue
+    // carries almost no luminance and needs more alpha than teal or amber to
+    // read as the same weight of tint.
+
+    static let violet = tone(0x7A62D9, 0x9A88E4)
+    static let violetSoft = tone(0xF1EDFF, 0x7A62D9, darkAlpha: 0.28)
+
+    static let teal = tone(0x279B94, 0x43B5AC)
+    static let tealSoft = tone(0xE7F6F4, 0x279B94, darkAlpha: 0.24)
+
+    static let green = tone(0x329369, 0x4DB786)
+    static let greenSoft = tone(0xE9F5EF, 0x329369, darkAlpha: 0.26)
+
+    static let amber = tone(0xB7791F, 0xD9A244)
+    static let amberSoft = tone(0xFFF4DA, 0xB7791F, darkAlpha: 0.24)
+    /// The Recommended badge's label: darker than `amber` so 11pt text on
+    /// `amberSoft` clears WCAG AA.
+    static let amberText = tone(0x946312, 0xE7BE75)
+    static let amberBorder = tone(0xB7791F, 0xD9A244, lightAlpha: 0.18, darkAlpha: 0.30)
+
+    static let rose = tone(0xC85B75, 0xDE7E94)
+    static let roseSoft = tone(0xFCECF1, 0xC85B75, darkAlpha: 0.26)
+
+    static let cyan = tone(0x358CA8, 0x5CACC6)
+    static let cyanSoft = tone(0xEAF5F8, 0x358CA8, darkAlpha: 0.26)
+
+    static let destructive = tone(0xC94F4F, 0xE06C6C)
+    static let destructiveSoft = tone(0xFCECEC, 0xC94F4F, darkAlpha: 0.28)
+
+    /// Status vocabulary, expressed through the accent set so there is one
+    /// palette rather than two.
+    static let success = green
+    static let warning = amber
+    static let danger = destructive
+    static let info = cyan
+
+    /// One semantic accent: a glyph colour plus the soft tint behind it. Task
+    /// categories, status tiles, and icon containers all resolve through this so
+    /// no call site invents a pairing.
+    enum Accent: CaseIterable {
+        case primary, violet, teal, green, amber, rose, cyan, neutral
+
+        var color: Color {
+            switch self {
+            case .primary: return Theme.accent
+            case .violet:  return Theme.violet
+            case .teal:    return Theme.teal
+            case .green:   return Theme.green
+            case .amber:   return Theme.amber
+            case .rose:    return Theme.rose
+            case .cyan:    return Theme.cyan
+            case .neutral: return Theme.textPrimary
+            }
+        }
+
+        var soft: Color {
+            switch self {
+            case .primary: return Theme.accentSoft
+            case .violet:  return Theme.violetSoft
+            case .teal:    return Theme.tealSoft
+            case .green:   return Theme.greenSoft
+            case .amber:   return Theme.amberSoft
+            case .rose:    return Theme.roseSoft
+            case .cyan:    return Theme.cyanSoft
+            case .neutral: return Theme.secondarySurface
+            }
+        }
+    }
+
+    // MARK: The one branded gradient
+
+    /// Indigo → teal. Reserved for the product mark and very small brand
+    /// details; it is never a surface fill.
     static var brandGradient: LinearGradient {
         LinearGradient(
             colors: [accent, accentDeep],
@@ -35,266 +151,196 @@ enum Theme {
         )
     }
 
-    /// A soft, mostly-transparent wash of the brand gradient for backgrounds.
+    /// A near-neutral wash for large decorative areas: a hint of the brand at
+    /// the very edge of perceptibility, so it can sit behind content without
+    /// tinting it.
     static var brandWash: LinearGradient {
         LinearGradient(
-            colors: [accent.opacity(0.16), accentDeep.opacity(0.10)],
+            colors: [accent.opacity(0.05), accentDeep.opacity(0.035)],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
     }
 
-    // MARK: Semantic status colors
+    // MARK: Live activity
 
-    static let success = adaptive(
-        light: NSColor(red: 0.075, green: 0.478, blue: 0.345, alpha: 1),
-        dark: NSColor(red: 0.231, green: 0.827, blue: 0.604, alpha: 1)
-    )
-    static let warning = adaptive(
-        light: NSColor(red: 0.596, green: 0.396, blue: 0.0, alpha: 1),
-        dark: NSColor(red: 0.945, green: 0.722, blue: 0.294, alpha: 1)
-    )
-    static let danger = adaptive(
-        light: NSColor(red: 0.788, green: 0.204, blue: 0.302, alpha: 1),
-        dark: NSColor(red: 1.0, green: 0.396, blue: 0.478, alpha: 1)
-    )
-    static let info = adaptive(
-        light: NSColor(red: 0.153, green: 0.435, blue: 0.800, alpha: 1),
-        dark: NSColor(red: 0.388, green: 0.655, blue: 1.0, alpha: 1)
-    )
+    /// The border a control wears while the agent is genuinely working. Three
+    /// branded hues only — indigo (interaction), violet (the model), teal (the
+    /// brand's second note) — closing back on indigo so the rotation has no
+    /// seam. The sweep is the signal; brightness never pulses.
+    enum Activity {
+        static let sweep: [Color] = [Theme.accent, Theme.violet, Theme.teal, Theme.accent]
 
-    // MARK: Surfaces
+        /// A hair thicker than a resting hairline, so the travel is legible
+        /// without the composer gaining weight.
+        static let lineWidth: CGFloat = 1.6
+        /// Sits on the focus halo's geometry, so switching between them never
+        /// shifts the composer's apparent size.
+        static let haloWidth: CGFloat = 3
+        static let haloOpacity: Double = 0.22
 
-    /// True-black OLED canvas. Keeping this token centralized prevents gray
-    /// system materials from washing out large parts of the window.
-    static let canvas = adaptive(
-        light: NSColor(red: 0.965, green: 0.973, blue: 0.984, alpha: 1),
-        dark: NSColor(red: 0.027, green: 0.035, blue: 0.051, alpha: 1)
-    )
-    static let sidebarFill = adaptive(
-        light: NSColor(red: 0.925, green: 0.945, blue: 0.969, alpha: 1),
-        dark: NSColor(red: 0.035, green: 0.047, blue: 0.067, alpha: 1)
-    )
-    static let panelFill = adaptive(
-        light: NSColor(red: 1, green: 1, blue: 1, alpha: 1),
-        dark: NSColor(red: 0.055, green: 0.071, blue: 0.094, alpha: 1)
-    )
-    static let raisedFill = adaptive(
-        light: NSColor(red: 0.953, green: 0.965, blue: 0.980, alpha: 1),
-        dark: NSColor(red: 0.075, green: 0.094, blue: 0.129, alpha: 1)
-    )
-    static let surfaceHover = adaptive(
-        light: NSColor(red: 0.902, green: 0.925, blue: 0.957, alpha: 1),
-        dark: NSColor(red: 0.110, green: 0.137, blue: 0.188, alpha: 1)
-    )
-    static let surfaceSelected = accent.opacity(0.13)
-    static let textPrimary = adaptive(
-        light: NSColor(red: 0.082, green: 0.102, blue: 0.137, alpha: 1),
-        dark: NSColor(red: 0.957, green: 0.969, blue: 0.984, alpha: 1)
-    )
-    static let secondaryText = adaptive(
-        light: NSColor(red: 0.290, green: 0.337, blue: 0.408, alpha: 1),
-        dark: NSColor(red: 0.647, green: 0.682, blue: 0.733, alpha: 1)
-    )
-    static let tertiaryText = adaptive(
-        light: NSColor(red: 0.420, green: 0.467, blue: 0.545, alpha: 1),
-        dark: NSColor(red: 0.443, green: 0.482, blue: 0.545, alpha: 1)
-    )
-    static let surface = panelFill
-    static let surfaceRaised = raisedFill
+        /// Seconds per rotation. Slow enough to read as ambient presence.
+        static let period: Double = 2.8
+        /// Cross-fade in and out of the resting border.
+        static let fade = Animation.easeInOut(duration: 0.18)
 
-    /// Cards stay visibly separated from black without illuminating large
-    /// screen areas—important for OLED power use and readable hierarchy.
-    static var cardFill: AnyShapeStyle {
-        AnyShapeStyle(panelFill)
+        /// Reduce Motion substitute: the model's violet, held still.
+        static let staticTint = Theme.violet
+
+        static func gradient(angle: Angle) -> AngularGradient {
+            AngularGradient(colors: sweep, center: .center, angle: angle)
+        }
     }
 
-    /// Strong enough to remain visible against true black.
-    static let borderSubtle = adaptive(
-        light: NSColor(red: 0.800, green: 0.831, blue: 0.875, alpha: 0.72),
-        dark: NSColor(red: 0.169, green: 0.200, blue: 0.251, alpha: 0.66)
-    )
-    static let borderStrong = adaptive(
-        light: NSColor(red: 0.714, green: 0.753, blue: 0.808, alpha: 1),
-        dark: NSColor(red: 0.169, green: 0.200, blue: 0.251, alpha: 1)
-    )
-    static var hairline: Color { borderSubtle }
-    static let strongBorder = borderStrong
-    static let focusRing = accent.opacity(0.78)
+    // MARK: Surfaces
+    //
+    // Three levels, and only three: the application canvas, the secondary
+    // regions (chrome, grouped controls), and elevated interactive surfaces
+    // (cards, popovers, the composer).
+    //
+    // In dark the canvas is true black and the levels above it are spaced by
+    // roughly 3–5 points of CIE L*, against 1.3–1.9 before. Even steps are the
+    // whole game on OLED: the base emits nothing, so a level is only "above"
+    // another if the step itself is perceptible, and nothing else is left to
+    // fake it once shadows stop registering.
+
+    /// Level 1 — the application canvas. Warm off-white in light; true black in
+    /// dark, so on OLED the largest region of the app draws no power at all.
+    static let canvas = tone(0xF7F7F5, 0x000000)
+    /// Level 1 — the workspace pane, a shade brighter than the canvas.
+    static let workspaceSurface = tone(0xFBFBFA, 0x0B0B0E)
+    /// Level 2 — chrome and other secondary regions.
+    static let chromeSurface = tone(0xF1F2F3, 0x141418)
+    /// Level 3 — cards, popovers, the composer.
+    static let elevatedSurface = tone(0xFFFFFF, 0x1A1A1F)
+    /// A quiet inset surface: attachment chips, icon tiles, code wells.
+    static let secondarySurface = tone(0xF4F5F6, 0x222229)
+    /// The next step down, for hover on an inset surface.
+    static let tertiarySurface = tone(0xEEEFF1, 0x2C2C34)
+
+    /// The card surface as a shape style, for the many call sites that switch
+    /// between it and an accent fill.
+    static var cardFill: AnyShapeStyle { AnyShapeStyle(elevatedSurface) }
+
+    // MARK: Text
+    //
+    // Dark body text stops short of white on purpose. Near-white on true black
+    // is where OLED halation shows up — strokes bleed and long paragraphs smear
+    // during scrolling — so primary sits at #E3E5EA, still 16.7:1 on the canvas
+    // and 13.8:1 on a card. Secondary and tertiary come down with it, because a
+    // darker canvas raises every foreground's contrast and would otherwise
+    // flatten the three levels into one.
+
+    static let textPrimary = tone(0x202226, 0xE3E5EA)
+    static let secondaryText = tone(0x626873, 0x9BA1AB)
+    static let tertiaryText = tone(0x8B919B, 0x868C96)
+    static let disabledText = tone(0xADB1B8, 0x626873)
+    static let textInverse = Color.white
+
+    // MARK: Borders
+    //
+    // Raised in dark. With the canvas at true black and shadows unable to
+    // register on it, the hairline is half of what separates a card from what
+    // it sits on — the surface step is the other half.
+
+    static let borderSubtle = tone(0xE3E5E8, 0xFFFFFF, darkAlpha: 0.12)
+    static let borderStandard = tone(0xD8DBE0, 0xFFFFFF, darkAlpha: 0.17)
+    static let borderStrong = tone(0xC8CDD4, 0xFFFFFF, darkAlpha: 0.23)
+    /// Hairline rules between regions. Fainter than any card border.
+    static let divider = tone(0x1F2329, 0xFFFFFF, lightAlpha: 0.08, darkAlpha: 0.11)
+
+    /// Focus is signalled by an indigo border plus a soft outer ring — never by
+    /// a colour change alone.
+    static let focusRing = accent
+    static let focusRingHalo = tone(0x5368E8, 0x7183E8, lightAlpha: 0.12, darkAlpha: 0.30)
+
+    // MARK: Elevation
+    //
+    // Two very soft neutral layers. Shadows are never coloured and never used to
+    // simulate glass.
+    //
+    // In dark these no longer carry hierarchy. A black shadow over the black
+    // canvas is literally a no-op, so anything sitting directly on the canvas —
+    // every `commandCard`, the Sites and History lists — is separated by its
+    // surface step and its hairline instead. What is left for the shadows is the
+    // minority of cases where something floats over a *lit* surface: the
+    // composer and the execution rail over the workspace pane, popovers over a
+    // card. The dark alphas are raised so that residual darkening is actually
+    // legible in those places rather than a rounding error.
+
+    enum Shadow {
+        static let ambient = tone(0x14181F, 0x000000, lightAlpha: 0.03, darkAlpha: 0.48)
+        static let key = tone(0x14181F, 0x000000, lightAlpha: 0.025, darkAlpha: 0.40)
+        static let ambientRaised = tone(0x14181F, 0x000000, lightAlpha: 0.05, darkAlpha: 0.55)
+        static let keyRaised = tone(0x14181F, 0x000000, lightAlpha: 0.05, darkAlpha: 0.46)
+    }
 
     // MARK: Workspace chrome
 
-    /// Tokens for the unified workspace command bar. Deliberately neutral:
-    /// tonal separation from the canvas instead of a colored band, with the
-    /// accent reserved for live activity, selection, and focus.
+    /// Tokens for the application bar. Neutral by construction: the bar is a
+    /// white translucent surface with one hairline, and the accent appears only
+    /// on live activity, selection, and focus.
     enum Chrome {
 
-        /// Semi-transparent toolbar surface; pairs with `.ultraThinMaterial`
-        /// so scrolled content reads faintly through it.
-        static let toolbarFill = adaptive(
-            light: NSColor(red: 0.988, green: 0.988, blue: 0.992, alpha: 0.94),
-            dark: NSColor(red: 0.067, green: 0.078, blue: 0.102, alpha: 0.94)
-        )
-        static let controlFill = adaptive(
-            light: NSColor(red: 0.941, green: 0.945, blue: 0.957, alpha: 1),
-            dark: NSColor(red: 0.098, green: 0.114, blue: 0.145, alpha: 1)
-        )
-        static let controlHover = adaptive(
-            light: NSColor(red: 0.914, green: 0.922, blue: 0.941, alpha: 1),
-            dark: NSColor(red: 0.125, green: 0.145, blue: 0.184, alpha: 1)
-        )
-        static let controlPressed = adaptive(
-            light: NSColor(red: 0.886, green: 0.898, blue: 0.922, alpha: 1),
-            dark: NSColor(red: 0.153, green: 0.176, blue: 0.220, alpha: 1)
-        )
-        static let controlBorder = adaptive(
-            light: NSColor(red: 0.882, green: 0.894, blue: 0.914, alpha: 1),
-            dark: NSColor(white: 1, alpha: 0.08)
-        )
-        /// Elevated separator that appears once content scrolls under the bar.
-        static let toolbarBorderRaised = adaptive(
-            light: NSColor(red: 0.816, green: 0.835, blue: 0.863, alpha: 1),
-            dark: NSColor(white: 1, alpha: 0.14)
-        )
-        static let textPrimary = adaptive(
-            light: NSColor(red: 0.125, green: 0.133, blue: 0.157, alpha: 1),
-            dark: NSColor(red: 0.953, green: 0.961, blue: 0.973, alpha: 1)
-        )
-        static let textSecondary = adaptive(
-            light: NSColor(red: 0.435, green: 0.459, blue: 0.502, alpha: 1),
-            dark: NSColor(red: 0.635, green: 0.663, blue: 0.706, alpha: 1)
-        )
-        static let textMuted = adaptive(
-            light: NSColor(red: 0.573, green: 0.596, blue: 0.639, alpha: 1),
-            dark: NSColor(red: 0.451, green: 0.486, blue: 0.537, alpha: 1)
-        )
-        /// Restrained indigo used only for live state, selection, and focus.
-        static let accent = adaptive(
-            light: NSColor(red: 0.384, green: 0.357, blue: 0.965, alpha: 1), // #625BF6
-            dark: NSColor(red: 0.471, green: 0.447, blue: 0.973, alpha: 1)  // #7872F8
-        )
-        static let accentHover = adaptive(
-            light: NSColor(red: 0.341, green: 0.314, blue: 0.914, alpha: 1), // #5750E9
-            dark: NSColor(red: 0.529, green: 0.506, blue: 0.984, alpha: 1)
-        )
-        static let accentTint = accent.opacity(0.10)
-
-        // MARK: Application bar
-        //
-        // The shell's top bar is the app's single material layer: one
-        // translucent surface, one hairline, one inner highlight, one very soft
-        // separation shadow. Controls inside it never add blur of their own —
-        // they tint the bar they sit on. Values are the neutral chrome scale
-        // tuned to this app's cool slate palette.
-
-        /// The bar's translucent surface, layered over one blur.
-        static let barFill = adaptive(
-            light: NSColor(red: 0.973, green: 0.976, blue: 0.984, alpha: 0.78),
-            dark: NSColor(red: 0.067, green: 0.082, blue: 0.118, alpha: 0.76)
-        )
-        /// The bar's bottom hairline.
-        static let barBorder = adaptive(
-            light: NSColor(red: 0.071, green: 0.094, blue: 0.149, alpha: 0.10),
-            dark: NSColor(white: 1, alpha: 0.09)
-        )
+        /// The bar's translucent surface, layered over one blur. In dark it is
+        /// both darker and more opaque: `.bar` renders around #1D1D21 over a
+        /// black canvas, and letting a fifth of that through would float the
+        /// chrome well above its own level on the ladder. At 88% the bar lands
+        /// on `chromeSurface` and stops depending on what the material does.
+        static let barFill = tone(0xFFFFFF, 0x121216, lightAlpha: 0.82, darkAlpha: 0.88)
+        /// Opaque fallback when the material is unavailable.
+        static let barFillOpaque = tone(0xF7F8F8, 0x141418)
+        static let barBorder = Theme.divider
         /// A single inner highlight along the bar's top edge.
-        static let barHighlight = adaptive(
-            light: NSColor(white: 1, alpha: 0.72),
-            dark: NSColor(white: 1, alpha: 0.055)
-        )
+        static let barHighlight = tone(0xFFFFFF, 0xFFFFFF, lightAlpha: 0.70, darkAlpha: 0.06)
         /// Extremely soft separation under the bar.
-        static let barShadow = adaptive(
-            light: NSColor(red: 0.063, green: 0.094, blue: 0.157, alpha: 0.045),
-            dark: NSColor(white: 0, alpha: 0.22)
-        )
-        /// Opaque fallback if the material is unavailable.
-        static let barFillOpaque = adaptive(
-            light: NSColor(red: 0.973, green: 0.976, blue: 0.984, alpha: 1),
-            dark: NSColor(red: 0.067, green: 0.082, blue: 0.118, alpha: 1)
-        )
+        static let barShadow = tone(0x14181F, 0x000000, lightAlpha: 0.04, darkAlpha: 0.38)
+        /// Vertical hairline dividers between zones.
+        static let separator = tone(0x1F2329, 0xFFFFFF, lightAlpha: 0.09, darkAlpha: 0.11)
 
-        /// Vertical hairline dividers between zones. Deliberately fainter than
-        /// card borders so the bar stays quiet.
-        static let separator = adaptive(
-            light: NSColor(red: 0.071, green: 0.094, blue: 0.149, alpha: 0.11),
-            dark: NSColor(white: 1, alpha: 0.08)
-        )
+        static let textPrimary = Theme.textPrimary
+        static let textSecondary = Theme.secondaryText
+        static let textMuted = Theme.tertiaryText
 
-        /// Translucent control surfaces that read as tints of the bar.
-        static let barControlFill = adaptive(
-            light: NSColor(white: 1, alpha: 0.46),
-            dark: NSColor(white: 1, alpha: 0.045)
-        )
-        static let barControlHover = adaptive(
-            light: NSColor(white: 1, alpha: 0.72),
-            dark: NSColor(white: 1, alpha: 0.075)
-        )
-        static let barControlActive = adaptive(
-            light: NSColor(white: 1, alpha: 0.86),
-            dark: NSColor(white: 1, alpha: 0.105)
-        )
-        static let barControlPressed = adaptive(
-            light: NSColor(red: 0.898, green: 0.910, blue: 0.933, alpha: 0.92),
-            dark: NSColor(white: 1, alpha: 0.135)
-        )
-        static let barControlBorder = adaptive(
-            light: NSColor(red: 0.071, green: 0.094, blue: 0.149, alpha: 0.08),
-            dark: NSColor(white: 1, alpha: 0.07)
-        )
+        /// Primary interaction inside the chrome — the same indigo as the rest
+        /// of the app, not a second blue.
+        static let accent = Theme.accent
+        static let accentHover = Theme.accentHover
+        static let accentTint = Theme.accentSoft
+
+        /// Control surfaces read as neutral tints of the bar.
+        static let controlFill = Theme.secondarySurface
+        static let controlHover = Theme.tertiarySurface
+        static let controlPressed = tone(0xE7E8EB, 0x34343D)
+        static let controlBorder = Theme.borderSubtle
+
+        // The dark tints step up with the bar: they are read against a darker
+        // surface than before, and the selected state has to hold its own
+        // without the shadow underneath it doing any work.
+
+        static let barControlFill = tone(0xFFFFFF, 0xFFFFFF, lightAlpha: 0.55, darkAlpha: 0.06)
+        static let barControlHover = tone(0xFFFFFF, 0xFFFFFF, lightAlpha: 0.85, darkAlpha: 0.09)
+        /// The selected state is an elevated white surface, not a tint.
+        static let barControlActive = tone(0xFFFFFF, 0xFFFFFF, lightAlpha: 1, darkAlpha: 0.13)
+        static let barControlPressed = tone(0xEDEEF0, 0xFFFFFF, lightAlpha: 0.95, darkAlpha: 0.16)
+        static let barControlBorder = tone(0x1F2329, 0xFFFFFF, lightAlpha: 0.07, darkAlpha: 0.09)
         /// A slightly firmer hairline for the selected state only.
-        static let barControlBorderActive = adaptive(
-            light: NSColor(red: 0.071, green: 0.094, blue: 0.149, alpha: 0.13),
-            dark: NSColor(white: 1, alpha: 0.12)
-        )
+        static let barControlBorderActive = tone(0xD8DBE0, 0xFFFFFF, lightAlpha: 1, darkAlpha: 0.16)
+        /// Grouped containers recess very slightly instead of sitting on a
+        /// brighter surface.
+        static let barGroupFill = tone(0x1F2329, 0xFFFFFF, lightAlpha: 0.04, darkAlpha: 0.045)
 
-        /// Grouped containers (navigation, view controls) recess very slightly
-        /// instead of sitting on a brighter surface.
-        static let barGroupFill = adaptive(
-            light: NSColor(red: 0.071, green: 0.094, blue: 0.149, alpha: 0.035),
-            dark: NSColor(white: 1, alpha: 0.028)
-        )
-
-        // MARK: Popovers
-        //
         // Popovers deliberately do *not* repeat the bar's blur: menus need
         // legibility, so they use a near-opaque elevated surface.
 
-        static let popoverFill = adaptive(
-            light: NSColor(red: 0.988, green: 0.992, blue: 0.996, alpha: 0.99),
-            dark: NSColor(red: 0.114, green: 0.129, blue: 0.161, alpha: 0.99)
-        )
-        static let popoverBorder = adaptive(
-            light: NSColor(red: 0.071, green: 0.094, blue: 0.149, alpha: 0.12),
-            dark: NSColor(white: 1, alpha: 0.10)
-        )
-        static let popoverShadow = adaptive(
-            light: NSColor(white: 0, alpha: 0.14),
-            dark: NSColor(white: 0, alpha: 0.44)
-        )
-        static let popoverRowHover = adaptive(
-            light: NSColor(red: 0.071, green: 0.094, blue: 0.149, alpha: 0.05),
-            dark: NSColor(white: 1, alpha: 0.055)
-        )
-        static let popoverRowSelected = adaptive(
-            light: NSColor(red: 0.071, green: 0.094, blue: 0.149, alpha: 0.075),
-            dark: NSColor(white: 1, alpha: 0.085)
-        )
+        static let popoverFill = tone(0xFFFFFF, 0x1E1E25, lightAlpha: 0.99, darkAlpha: 0.99)
+        static let popoverBorder = Theme.borderStandard
+        static let popoverShadow = tone(0x14181F, 0x000000, lightAlpha: 0.13, darkAlpha: 0.58)
+        static let popoverRowHover = tone(0x1F2329, 0xFFFFFF, lightAlpha: 0.05, darkAlpha: 0.08)
+        static let popoverRowSelected = Theme.accentSoft
 
-        enum Metrics {
-            /// The shell's bar height lives in `TopBarMetrics` — this alias
-            /// exists so older call sites keep resolving to one value.
-            static var toolbarHeight: CGFloat { TopBarMetrics.height }
-            static let controlHeight: CGFloat = 32
-            static let controlRadius: CGFloat = 8
-            static let groupRadius: CGFloat = 9
-            static let toggleSize: CGFloat = 32
-            static let toggleRadius: CGFloat = 8
-            static let statusHeight: CGFloat = 28
-            static let statusDot: CGFloat = 6
-            static let iconSize: CGFloat = 15
-            static let edgePadding: CGFloat = 12
-            static let regionGap: CGFloat = 10
-        }
+        // The chrome's dimensions all live in `TopBarMetrics`: there is one
+        // bar, so one place owns its scale.
 
         enum Timing {
             /// The shell's easing curve. Native-feeling: quick to leave, slow
@@ -303,11 +349,11 @@ enum Theme {
                 .timingCurve(0.2, 0.8, 0.2, 1, duration: duration)
             }
 
-            static let hover = curve(0.13)
-            static let press = curve(0.07)
+            static let hover = curve(0.15)
+            static let press = curve(0.09)
             static let status = curve(0.16)
             static let selection = curve(0.17)
-            static let elevation = curve(0.18)
+            static let elevation = curve(0.19)
             static let popoverOpen = curve(0.15)
             static let popoverClose = curve(0.11)
             /// One restrained indicator cycle while real work is happening.
@@ -321,7 +367,8 @@ enum Theme {
         static let small: CGFloat = 8
         static let medium: CGFloat = 12
         static let large: CGFloat = 16
-        static let card: CGFloat = 12
+        static let card: CGFloat = 13
+        static let composer: CGFloat = 15
     }
 
     enum Space {
@@ -347,8 +394,20 @@ enum Theme {
 // MARK: - View conveniences
 
 extension View {
-    /// Standard panel chrome. Depth comes from luminance rather than decorative
-    /// gradient borders, keeping the signature gradient meaningful.
+    /// The shared card elevation: two very soft neutral layers, slightly
+    /// clearer while hovered. Depth comes from luminance and these two shadows
+    /// — never from a coloured glow. In dark the shadows fall away over the
+    /// black canvas and the luminance step plus the hairline in `commandCard`
+    /// carry the separation on their own.
+    func cardElevation(raised: Bool = false) -> some View {
+        self
+            .shadow(color: raised ? Theme.Shadow.ambientRaised : Theme.Shadow.ambient,
+                    radius: raised ? 2 : 1.5, y: raised ? 1 : 1)
+            .shadow(color: raised ? Theme.Shadow.keyRaised : Theme.Shadow.key,
+                    radius: raised ? 18 : 12, y: raised ? 8 : 5)
+    }
+
+    /// Standard panel chrome: elevated surface, neutral hairline, soft lift.
     func commandCard(padding: CGFloat = Theme.cardPadding) -> some View {
         self
             .padding(padding)
@@ -357,18 +416,18 @@ extension View {
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                     .strokeBorder(Theme.borderSubtle, lineWidth: 1)
             )
+            .cardElevation()
     }
 
-    /// A full-pane glass surface inspired by the calm, luminous treatment used
-    /// across SiteAgent and ScreenHarbor.
+    /// A full-pane elevated surface for sheets and large panels.
     func glassPane(cornerRadius: CGFloat = Theme.Radius.large) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         return self
-            .background(Theme.panelFill.opacity(0.96), in: shape)
+            .background(Theme.elevatedSurface, in: shape)
             .overlay(
                 shape.strokeBorder(Theme.borderSubtle, lineWidth: 1)
             )
             .clipShape(shape)
-            .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
+            .cardElevation(raised: true)
     }
 }

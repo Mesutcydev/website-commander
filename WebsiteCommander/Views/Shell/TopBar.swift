@@ -15,22 +15,17 @@ import SwiftUI
 struct TopBar: View {
 
     let metrics: TopBarMetrics
-    /// The whole shell's size — the popover layer needs it to clamp menus
-    /// inside the window and to size its click-outside area.
-    let shellSize: CGSize
     @Binding var destination: Destination
     @Binding var showsPreview: Bool
     /// View controls only appear where the app really has more than one view —
     /// today that is the Agent workspace's split.
     let showsViewControls: Bool
+    /// Exactly one bar popover can be open, by construction. The state is the
+    /// shell's, not the bar's, because the layer that draws it has to sit above
+    /// the workspace to be clickable.
+    @Binding var openPopover: TopBarPopoverKind?
 
-    @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var engine: AgentEngine
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.openSettings) private var openSettings
-
-    /// Exactly one bar popover can be open, by construction.
-    @State private var openPopover: TopBarPopoverKind?
 
     private var status: AgentStatusPresentation {
         .from(state: engine.state, pendingChanges: engine.pendingChanges.count)
@@ -50,9 +45,6 @@ struct TopBar: View {
         .background {
             TopBarMaterial()
                 .background { WindowDragArea() }
-        }
-        .overlayPreferenceValue(TopBarTriggerAnchorKey.self) { anchors in
-            popoverLayer(anchors: anchors)
         }
         .animation(Theme.Chrome.Timing.selection, value: metrics.density)
     }
@@ -244,174 +236,6 @@ struct TopBar: View {
         }
     }
 
-    // MARK: Popover layer
-
-    /// One layer, one popover, positioned 8pt under its trigger and aligned to
-    /// the trigger's leading edge. It lives here rather than in the shell so the
-    /// bar owns its own menus, and it is drawn above the workspace because the
-    /// bar is the shell's top safe-area inset.
-    @ViewBuilder
-    private func popoverLayer(anchors: [TopBarPopoverKind: Anchor<CGRect>]) -> some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .topLeading) {
-                if openPopover != nil {
-                    // Click-outside: behaves like a menu's event-swallowing
-                    // window, but stays inside the app's own hierarchy.
-                    Rectangle()
-                        .fill(Color.black.opacity(0.0001))
-                        .frame(width: max(shellSize.width, proxy.size.width),
-                               height: max(shellSize.height, proxy.size.height))
-                        .contentShape(Rectangle())
-                        .onTapGesture { close() }
-                        .accessibilityHidden(true)
-
-                    Button("") { close() }
-                        .buttonStyle(.plain)
-                        .keyboardShortcut(.cancelAction)
-                        .frame(width: 0, height: 0)
-                        .opacity(0)
-                        .accessibilityHidden(true)
-                }
-
-                if let kind = openPopover, let anchor = anchors[kind] {
-                    let trigger = proxy[anchor]
-                    popoverContent(kind)
-                        .modifier(TopBarPopoverTransition(reduceMotion: reduceMotion))
-                        .offset(x: clampedX(kind: kind, triggerMinX: trigger.minX),
-                                y: trigger.maxY + TopBarMetrics.popoverGap)
-                        .onExitCommand { close() }
-                }
-            }
-        }
-    }
-
-    private func clampedX(kind: TopBarPopoverKind, triggerMinX: CGFloat) -> CGFloat {
-        let width = kind.width
-        let available = shellSize.width > 0 ? shellSize.width : width + TopBarMetrics.paddingX * 2
-        let maximum = available - width - TopBarMetrics.paddingX * 2
-        return min(max(0, triggerMinX), max(0, maximum))
-    }
-
-    @ViewBuilder
-    private func popoverContent(_ kind: TopBarPopoverKind) -> some View {
-        let cap = metrics.popoverHeight(preferred: kind.preferredHeight,
-                                        windowHeight: shellSize.height)
-        switch kind {
-        case .project:
-            TopBarProjectPopover(
-                maxHeight: max(140, cap - 96),
-                onSelect: { workspace in
-                    settings.setActive(workspace)
-                    close()
-                },
-                onAddSite: {
-                    close()
-                    destination = .sites
-                    NotificationCenter.default.post(name: .requestAddSite, object: nil)
-                }
-            )
-        case .navigation:
-            TopBarPopoverPanel {
-                VStack(spacing: 2) {
-                    ForEach(Destination.allCases) { item in
-                        TopBarPopoverRow(
-                            title: item.rawValue,
-                            isSelected: item == destination,
-                            leading: { TopBarRowIcon(systemImage: item.icon) },
-                            action: {
-                                close()
-                                select(item)
-                            }
-                        )
-                    }
-                }
-            }
-            .frame(width: TopBarPopoverKind.navigation.width)
-        case .model:
-            TopBarModelPopover(maxHeight: max(180, cap - 24), onSelect: { close() })
-        case .status:
-            TopBarStatusPopover(
-                status: status,
-                maxHeight: max(110, cap - 140),
-                // The staged-change review UI lives in the Agent workspace;
-                // this navigates to it rather than inventing a second one.
-                onReviewChanges: {
-                    close()
-                    select(.agent)
-                }
-            )
-        case .overflow:
-            overflowPopover
-        }
-    }
-
-    /// Lower-priority actions only, and only ones that really exist elsewhere
-    /// in the app. Project, model, status, and Stop are never in here.
-    private var overflowPopover: some View {
-        TopBarPopoverPanel {
-            VStack(spacing: 2) {
-                if showsViewControls && metrics.viewControlPlacement == .overflow {
-                    TopBarPopoverRow(
-                        title: showsPreview
-                            ? String(localized: "Hide live preview")
-                            : String(localized: "Show live preview"),
-                        isSelected: showsPreview,
-                        leading: { TopBarRowIcon(systemImage: "rectangle.split.2x1") },
-                        action: {
-                            close()
-                            setPreview(!showsPreview)
-                        }
-                    )
-                    TopBarPopoverSeparator()
-                }
-                TopBarPopoverRow(
-                    title: String(localized: "Saved chats"),
-                    leading: { TopBarRowIcon(systemImage: "tray.full") },
-                    action: {
-                        close()
-                        NotificationCenter.default.post(name: .requestConversations, object: nil)
-                    }
-                )
-                TopBarPopoverRow(
-                    title: String(localized: "Command Palette…"),
-                    leading: { TopBarRowIcon(systemImage: "command") },
-                    action: {
-                        close()
-                        NotificationCenter.default.post(name: .requestPalette, object: nil)
-                    }
-                )
-                TopBarPopoverRow(
-                    title: String(localized: "Debug Current Site…"),
-                    isEnabled: settings.activeWorkspace != nil,
-                    leading: { TopBarRowIcon(systemImage: "ladybug") },
-                    action: {
-                        close()
-                        NotificationCenter.default.post(name: .requestDebug, object: nil)
-                    }
-                )
-                TopBarPopoverSeparator()
-                TopBarPopoverRow(
-                    title: String(localized: "Add Website…"),
-                    leading: { TopBarRowIcon(systemImage: "plus") },
-                    action: {
-                        close()
-                        destination = .sites
-                        NotificationCenter.default.post(name: .requestAddSite, object: nil)
-                    }
-                )
-                TopBarPopoverRow(
-                    title: String(localized: "Settings…"),
-                    leading: { TopBarRowIcon(systemImage: "gearshape") },
-                    action: {
-                        close()
-                        openSettings()
-                    }
-                )
-            }
-        }
-        .frame(width: TopBarPopoverKind.overflow.width)
-    }
-
     // MARK: Behaviour
 
     private func toggle(_ kind: TopBarPopoverKind) {
@@ -465,14 +289,18 @@ private struct TopBarNavigationItem: View {
             HStack(spacing: 6) {
                 Image(systemName: item.icon)
                     .font(.system(size: TopBarMetrics.navigationIconSize, weight: .medium))
+                    // Colour marks the current destination; the elevated
+                    // surface, the hairline, and the heavier label mark it too,
+                    // so selection never depends on hue alone.
+                    .foregroundStyle(isActive ? Theme.accent : foreground)
                 Text(item.barLabel)
-                    .font(Theme.ui(13, .medium))
+                    .font(Theme.ui(13, isActive ? .semibold : .medium))
                     .tracking(-0.13)
                     .lineLimit(1)
+                    .foregroundStyle(foreground)
             }
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 10)
-            .frame(height: TopBarMetrics.navigationItemHeight)
+            .frame(width: TopBarMetrics.navigationItemWidth(for: item),
+                   height: TopBarMetrics.navigationItemHeight)
         }
         .buttonStyle(TopBarControlButtonStyle(
             radius: TopBarMetrics.popoverRowRadius,

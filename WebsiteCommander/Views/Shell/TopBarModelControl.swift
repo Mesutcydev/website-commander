@@ -89,7 +89,10 @@ struct TopBarModelControl: View {
             HStack(spacing: 7) {
                 ProviderGlyph(providerID: selection.providerID,
                               fallbackSymbol: selection.providerIcon,
-                              tint: Theme.Chrome.accent)
+                              tint: Theme.violet)
+                // The label stays charcoal: violet at 13pt on the violet surface
+                // would not clear AA, so the accent lives in the glyph and the
+                // surface instead.
                 Text(selection.modelLabel)
                     .font(Theme.ui(13, .medium))
                     .foregroundStyle(isConfigured ? Theme.Chrome.textPrimary : Theme.Chrome.textMuted)
@@ -101,7 +104,7 @@ struct TopBarModelControl: View {
                     .contentTransition(.opacity)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.Chrome.textMuted)
+                    .foregroundStyle(Theme.violet.opacity(0.7))
                     .frame(width: TopBarMetrics.chevronSize,
                            height: TopBarMetrics.chevronSize)
             }
@@ -109,9 +112,11 @@ struct TopBarModelControl: View {
             .frame(height: TopBarMetrics.controlHeight)
             .frame(minWidth: metrics.modelMinWidth, alignment: .leading)
         }
+        // The model control is the app's AI surface, so it carries the violet
+        // identity instead of being a second blue control in the bar.
         .buttonStyle(TopBarControlButtonStyle(
             radius: TopBarMetrics.controlRadius,
-            emphasis: isOpen ? .selected : .resting
+            emphasis: .tinted(.violet)
         ))
         .focused($isFocused)
         .help("Choose the provider and model the agent uses")
@@ -162,7 +167,7 @@ struct TopBarModelPopover: View {
                                                       fallbackSymbol: provider.icon,
                                                       size: 18,
                                                       tint: provider.id == activeProviderID
-                                                          ? Theme.Chrome.accent
+                                                          ? Theme.violet
                                                           : Theme.Chrome.textSecondary)
                                     },
                                     action: {
@@ -198,6 +203,9 @@ struct TopBarModelPopover: View {
                     }
                 }
                 .frame(maxHeight: maxHeight)
+                // A scroll view is greedy: without this it claims the whole
+                // cap and leaves a dead band under a short list.
+                .fixedSize(horizontal: false, vertical: true)
                 .scrollBounceBehavior(.basedOnSize)
             }
         }

@@ -413,6 +413,90 @@ final class WebsiteCommanderTests: XCTestCase {
                        "the last message before New Chat must be persisted")
     }
 
+    /// After a crash the engine starts empty; the last conversation id is
+    /// remembered so relaunch can put the interrupted turn back on screen
+    /// instead of the empty Agent idle "homepage".
+    @MainActor
+    func testEngineRestoresLastConversationAfterRelaunch() async {
+        let originalConv = ConversationStore.fileURL
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("wc-conv-\(UUID().uuidString).json")
+        ConversationStore.fileURL = tmp
+        let defaultsKey = AgentEngine.currentConversationDefaultsKey
+        let previousDefaults = UserDefaults.standard.string(forKey: defaultsKey)
+        defer {
+            ConversationStore.fileURL = originalConv
+            try? FileManager.default.removeItem(at: tmp)
+            if let previousDefaults {
+                UserDefaults.standard.set(previousDefaults, forKey: defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+            }
+        }
+
+        let settings = SettingsStore()
+        let workspace = SiteWorkspace(name: "Restore Test", gitOwner: "octocat",
+                                      gitRepo: "hello-world", gitBranch: "main",
+                                      techStack: .vanillaHTML, deployment: .githubPages,
+                                      defaultModel: "")
+        settings.workspaces = [workspace]
+        settings.activeWorkspaceID = workspace.id
+
+        let engine = AgentEngine(settings: settings, browserController: BrowserController())
+        engine.conversationStore = ConversationStore()
+        engine.transcript.append(ChatMessage(role: .user, text: "finish the SEO pass"))
+        engine.transcript.append(ChatMessage(role: .assistant, text: "", reasoning: "checking meta tags"))
+        engine.flushConversation()
+
+        let savedID = engine.currentConversationID
+        XCTAssertNotNil(savedID)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: defaultsKey), savedID?.uuidString)
+
+        // Simulate process death + relaunch.
+        let relaunched = AgentEngine(settings: settings, browserController: BrowserController())
+        relaunched.conversationStore = ConversationStore()
+        XCTAssertTrue(relaunched.transcript.isEmpty)
+        relaunched.restoreLastConversationIfNeeded()
+        XCTAssertEqual(relaunched.currentConversationID, savedID)
+        XCTAssertEqual(relaunched.transcript.count, 2)
+        XCTAssertEqual(relaunched.transcript.first?.text, "finish the SEO pass")
+    }
+
+    /// Stopping mid-stream must keep the partial reply in the conversation
+    /// rather than clearing the live buffers and leaving a silent hole.
+    @MainActor
+    func testCancelGenerationPersistsPartialLiveReply() async {
+        let originalConv = ConversationStore.fileURL
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("wc-conv-\(UUID().uuidString).json")
+        ConversationStore.fileURL = tmp
+        defer {
+            ConversationStore.fileURL = originalConv
+            try? FileManager.default.removeItem(at: tmp)
+        }
+
+        let settings = SettingsStore()
+        let workspace = SiteWorkspace(name: "Cancel Test", gitOwner: "octocat",
+                                      gitRepo: "hello-world", gitBranch: "main",
+                                      techStack: .vanillaHTML, deployment: .githubPages,
+                                      defaultModel: "")
+        settings.workspaces = [workspace]
+        settings.activeWorkspaceID = workspace.id
+
+        let engine = AgentEngine(settings: settings, browserController: BrowserController())
+        engine.conversationStore = ConversationStore()
+        engine.transcript.append(ChatMessage(role: .user, text: "write a summary"))
+        engine.state = .streaming
+        engine.appendStreamText("Here is what I found so")
+        engine.cancelGeneration()
+
+        XCTAssertFalse(engine.state.isActive)
+        XCTAssertEqual(engine.liveAssistantText, "")
+        XCTAssertEqual(engine.transcript.last?.role, .assistant)
+        XCTAssertTrue(engine.transcript.last?.text.contains("Here is what I found so") == true)
+        XCTAssertNil(engine.lastError, "user-initiated Stop must not raise the error bar")
+    }
+
     // MARK: - Syntax highlighter (diff view)
 
     func testHighlightLangFromPath() {
@@ -472,12 +556,24 @@ final class WebsiteCommanderTests: XCTestCase {
         XCTAssertFalse(UpdateChecker.isNewer("0.9", than: "1.0.0"))
     }
 
+    func testResolvedFeedURLFallsBackToDefault() {
+        XCTAssertEqual(UpdateChecker.resolvedFeedURL(""), UpdateChecker.defaultFeedURL)
+        XCTAssertEqual(UpdateChecker.resolvedFeedURL("  "), UpdateChecker.defaultFeedURL)
+        XCTAssertEqual(
+            UpdateChecker.resolvedFeedURL("https://example.com/custom.json"),
+            "https://example.com/custom.json"
+        )
+    }
+
     @MainActor
-    func testUpdateCheckInertWithoutURL() async {
+    func testUpdateCheckUsesDefaultFeedWhenOverrideEmpty() async {
+        // Empty override resolves to the baked-in https feed; without network
+        // we only assert that empty is no longer a silent no-op that leaves
+        // lastError nil after rejecting an insecure override.
         let checker = UpdateChecker()
-        await checker.check(feedURL: "   ")
+        await checker.check(feedURL: "http://example.com/feed.json", userInitiated: true)
+        XCTAssertNotNil(checker.lastError)
         XCTAssertNil(checker.available)
-        XCTAssertNil(checker.lastError)   // empty = silent no-op, not an error
     }
 
     @MainActor
@@ -485,6 +581,14 @@ final class WebsiteCommanderTests: XCTestCase {
         let checker = UpdateChecker()
         await checker.check(feedURL: "http://example.com/feed.json")   // external http = rejected
         XCTAssertNotNil(checker.lastError)
+        XCTAssertNil(checker.available)
+    }
+
+    @MainActor
+    func testSilentCheckDoesNotSurfaceNetworkErrors() async {
+        let checker = UpdateChecker()
+        await checker.check(feedURL: "http://example.com/feed.json", userInitiated: false)
+        XCTAssertNil(checker.lastError)
         XCTAssertNil(checker.available)
     }
 

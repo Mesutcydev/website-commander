@@ -72,19 +72,23 @@ struct HistoryView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
+                    // The inspector is attached below the command row, not around
+                    // the whole destination: it brings an AppKit split container
+                    // with it, and a split container laid out around the row
+                    // ignores the shell's top inset and slides it under the bar.
                     content(gutter: gutter)
+                        .inspector(isPresented: Binding(
+                            get: { selectedCommit != nil },
+                            set: { if !$0 { selectedCommit = nil } }
+                        )) {
+                            if let selectedCommit {
+                                CommitDetails(commit: selectedCommit, workspace: workspace)
+                                    .inspectorColumnWidth(min: 280, ideal: 340, max: 430)
+                            }
+                        }
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-        }
-        .inspector(isPresented: Binding(
-            get: { selectedCommit != nil },
-            set: { if !$0 { selectedCommit = nil } }
-        )) {
-            if let selectedCommit {
-                CommitDetails(commit: selectedCommit, workspace: workspace)
-                    .inspectorColumnWidth(min: 280, ideal: 340, max: 430)
-            }
         }
         .task(id: workspace?.id) { await load() }
     }
@@ -133,7 +137,7 @@ struct HistoryView: View {
                                     }
                                 }
                             }
-                            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
+                            .background(Theme.elevatedSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
                             .overlay {
                                 RoundedRectangle(cornerRadius: Theme.Radius.medium)
                                     .strokeBorder(Theme.borderSubtle)
@@ -216,14 +220,14 @@ private struct HistoryCommitRow: View {
                     .foregroundStyle(Theme.secondaryText)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(Theme.raisedFill, in: RoundedRectangle(cornerRadius: 5))
+                    .background(Theme.secondarySurface, in: RoundedRectangle(cornerRadius: 5))
                 Image(systemName: "chevron.right")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(Theme.tertiaryText)
             }
             .padding(.horizontal, Theme.Space.m)
             .frame(height: 50)
-            .background(selected ? Theme.surfaceSelected : (hovering ? Theme.surfaceHover : .clear))
+            .background(selected ? Theme.accentSoft : (hovering ? Theme.tertiarySurface : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -260,7 +264,7 @@ private struct CommitDetails: View {
             }
             .padding(Theme.Space.l)
         }
-        .background(Theme.sidebarFill)
+        .background(Theme.elevatedSurface)
     }
 
     private func detail(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
@@ -279,11 +283,11 @@ private struct HistorySkeleton: View {
         VStack(spacing: Theme.Space.s) {
             ForEach(0..<8, id: \.self) { index in
                 HStack {
-                    RoundedRectangle(cornerRadius: 3).fill(Theme.raisedFill).frame(width: 18, height: 18)
+                    RoundedRectangle(cornerRadius: 3).fill(Theme.secondarySurface).frame(width: 18, height: 18)
                     VStack(alignment: .leading, spacing: 6) {
-                        RoundedRectangle(cornerRadius: 3).fill(Theme.raisedFill)
+                        RoundedRectangle(cornerRadius: 3).fill(Theme.secondarySurface)
                             .frame(width: CGFloat(220 + index * 17), height: 11)
-                        RoundedRectangle(cornerRadius: 3).fill(Theme.raisedFill)
+                        RoundedRectangle(cornerRadius: 3).fill(Theme.secondarySurface)
                             .frame(width: 150, height: 8)
                     }
                     Spacer()

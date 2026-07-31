@@ -123,6 +123,84 @@ struct StreamingCaret: View {
     }
 }
 
+// MARK: - Activity border (live work, on the control's own edge)
+
+/// Owns all three border states of a rounded control so they can never overlap:
+/// a neutral hairline at rest, indigo plus a soft halo while focused, and — only
+/// while the agent is actually working — a branded gradient that travels slowly
+/// around the same edge, replacing both.
+private struct ActivityBorder: ViewModifier {
+    let active: Bool
+    let focused: Bool
+    let cornerRadius: CGFloat
+
+    @Environment(\.accessibilityReduceMotion) private var reduce
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                shape.strokeBorder(focused ? Theme.focusRing : Theme.borderStandard, lineWidth: 1)
+                    .opacity(active ? 0 : 1)
+            }
+            // Focus adds a soft outer ring instead of a permanent bright
+            // outline, so the resting composer stays quiet.
+            .overlay {
+                halo.strokeBorder(focused ? Theme.focusRingHalo : .clear,
+                                  lineWidth: Theme.Activity.haloWidth)
+                    .opacity(active ? 0 : 1)
+            }
+            .overlay { sweep }
+            .animation(Theme.Activity.fade, value: active)
+    }
+
+    @ViewBuilder private var sweep: some View {
+        if active {
+            if reduce {
+                stroked(Theme.Activity.staticTint).transition(.opacity)
+            } else {
+                // The gradient's angle is derived from the timeline's clock, so
+                // the loop is continuous and survives view updates mid-rotation.
+                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
+                    stroked(Theme.Activity.gradient(angle: Self.angle(at: context.date)))
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private func stroked<S: ShapeStyle>(_ style: S) -> some View {
+        ZStack {
+            halo.strokeBorder(style, lineWidth: Theme.Activity.haloWidth)
+                .opacity(Theme.Activity.haloOpacity)
+            shape.strokeBorder(style, lineWidth: Theme.Activity.lineWidth)
+        }
+    }
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+
+    private var halo: some InsettableShape {
+        RoundedRectangle(cornerRadius: cornerRadius + Theme.Activity.haloWidth, style: .continuous)
+            .inset(by: -Theme.Activity.haloWidth)
+    }
+
+    private static func angle(at date: Date) -> Angle {
+        let period = Theme.Activity.period
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period)
+        return .degrees(phase / period * 360)
+    }
+}
+
+extension View {
+    /// Draws this control's resting, focused, and working borders as one
+    /// mutually exclusive set. See `ActivityBorder`.
+    func activityBorder(active: Bool, focused: Bool,
+                        cornerRadius: CGFloat = Theme.Radius.composer) -> some View {
+        modifier(ActivityBorder(active: active, focused: focused, cornerRadius: cornerRadius))
+    }
+}
+
 // MARK: - Chat status pill (toolbar)
 
 /// A compact, animated identity+state pill for the chat toolbar: the provider's
@@ -167,7 +245,7 @@ struct AgentStatusPill: View {
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(Theme.cardFill, in: Capsule())
-        .overlay(Capsule().strokeBorder(Theme.hairline))
+        .overlay(Capsule().strokeBorder(Theme.borderSubtle))
         .animation(Motion.snappy, value: engine.state)
     }
 }

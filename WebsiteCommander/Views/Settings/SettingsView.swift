@@ -1,28 +1,316 @@
 import SwiftUI
 import AppKit
 
-/// The Settings window: a tabbed form for GitHub auth, AI provider & keys,
-/// behavior toggles, and about info.
+// MARK: - Window metrics
+
+/// One place owns the Settings window's geometry. The width is fixed — a
+/// preferences window is a form, not a canvas — and the height follows the
+/// selected page between a floor (so a short page still looks like a window)
+/// and a ceiling (past which the page scrolls instead of growing).
+enum SettingsMetrics {
+    static let width: CGFloat = 620
+    static let minPageHeight: CGFloat = 300
+    static let maxPageHeight: CGFloat = 560
+    static let tabItemWidth: CGFloat = 84
+    static let pageInsets = EdgeInsets(top: Theme.Space.l, leading: Theme.Space.xl,
+                                       bottom: Theme.Space.xl, trailing: Theme.Space.xl)
+}
+
+// MARK: - Pages
+
+enum SettingsTab: String, CaseIterable, Identifiable {
+    case github, provider, behavior, onDevice, about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .github:   return "GitHub"
+        case .provider: return "AI Provider"
+        case .behavior: return "Behavior"
+        case .onDevice: return "On-Device"
+        case .about:    return "About"
+        }
+    }
+
+    /// One glyph per page, all from the same optical weight so the strip reads
+    /// as a set. The two AI pages deliberately differ (the provider is a remote
+    /// service; on-device is this Mac's own silicon).
+    var icon: String {
+        switch self {
+        case .github:   return "person.badge.key.fill"
+        case .provider: return "sparkles"
+        case .behavior: return "slider.horizontal.3"
+        case .onDevice: return "cpu"
+        case .about:    return "info.circle"
+        }
+    }
+}
+
+/// The Settings window: five pages — GitHub auth, AI provider & keys, behavior
+/// toggles, on-device inference, and about — sharing one chrome.
 struct SettingsView: View {
 
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var engine: AgentEngine
+    @EnvironmentObject var updater: UpdateChecker
+    @EnvironmentObject var bridge: LocalBridge
+    @EnvironmentObject var cloudSync: CloudSyncService
+
+    @State private var tab: SettingsTab = .github
 
     var body: some View {
-        TabView {
-            GitHubSettingsTab()
-                .tabItem { Label("GitHub", systemImage: "github") }
-            ProviderSettingsTab()
-                .tabItem { Label("AI Provider", systemImage: "cpu") }
-            BehaviorSettingsTab()
-                .tabItem { Label("Behavior", systemImage: "slider.horizontal.3") }
-            OnDeviceSettingsTab()
-                .tabItem { Label("On-Device", systemImage: "cpu.fill") }
-            AboutSettingsTab()
-                .tabItem { Label("About", systemImage: "info.circle") }
+        VStack(spacing: 0) {
+            SettingsTabStrip(selection: $tab)
+            page
         }
+        .frame(width: SettingsMetrics.width)
+        .background(Theme.canvas)
+        .navigationTitle(LocalizedStringKey(tab.title))
+        // Re-publish every object the pages need. macOS Settings hosts its
+        // content in a way that has dropped `UpdateChecker` before
+        // (EXC_BREAKPOINT in AboutSettingsTab), which relaunches the app onto
+        // the homepage.
         .environmentObject(settings)
         .environmentObject(engine)
+        .environmentObject(updater)
+        .environmentObject(bridge)
+        .environmentObject(cloudSync)
+    }
+
+    @ViewBuilder private var page: some View {
+        switch tab {
+        case .github:   GitHubSettingsTab()
+        case .provider: ProviderSettingsTab()
+        case .behavior: BehaviorSettingsTab()
+        case .onDevice: OnDeviceSettingsTab()
+        case .about:    AboutSettingsTab()
+        }
+    }
+}
+
+// MARK: - Tab strip
+
+/// The page switcher. Every item is the same width with the same glyph size and
+/// label weight, the selected one wears the app's soft indigo, and an unselected
+/// item stays legible secondary text rather than looking disabled.
+private struct SettingsTabStrip: View {
+    @Binding var selection: SettingsTab
+
+    var body: some View {
+        HStack(spacing: Theme.Space.xs) {
+            ForEach(SettingsTab.allCases) { tab in
+                Button { selection = tab } label: {
+                    VStack(spacing: 5) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 15, weight: .medium))
+                            .frame(height: 17)
+                        Text(LocalizedStringKey(tab.title))
+                            .font(Theme.ui(11, .semibold))
+                            .lineLimit(1)
+                    }
+                }
+                .buttonStyle(SettingsTabButtonStyle(isSelected: selection == tab))
+                .accessibilityAddTraits(selection == tab ? [.isSelected] : [])
+            }
+        }
+        .padding(.horizontal, Theme.Space.m)
+        .padding(.vertical, Theme.Space.s + 2)
+        .frame(maxWidth: .infinity)
+        .background(Theme.chromeSurface)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.divider).frame(height: 1)
+        }
+    }
+}
+
+private struct SettingsTabButtonStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        Surface(configuration: configuration, isSelected: isSelected)
+    }
+
+    private struct Surface: View {
+        let configuration: Configuration
+        let isSelected: Bool
+
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var isHovering = false
+
+        private let shape = RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(isSelected ? Theme.accent : Theme.secondaryText)
+                .frame(width: SettingsMetrics.tabItemWidth)
+                .padding(.vertical, Theme.Space.s - 1)
+                .background(fill, in: shape)
+                .overlay {
+                    shape.strokeBorder(isSelected ? Theme.accentBorder : .clear, lineWidth: 1)
+                }
+                .focusRing(isFocused, cornerRadius: Theme.Radius.small)
+                .contentShape(shape)
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+                .animation(Theme.Chrome.Timing.press, value: configuration.isPressed)
+                .animation(Theme.Chrome.Timing.selection, value: isSelected)
+                .animation(Theme.Chrome.Timing.hover, value: isHovering)
+                .onHover { isHovering = $0 }
+        }
+
+        private var fill: Color {
+            if isSelected { return Theme.accentSoft }
+            if configuration.isPressed { return Theme.Chrome.controlPressed }
+            return isHovering ? Theme.Chrome.controlFill : .clear
+        }
+    }
+}
+
+// MARK: - Page scaffold
+
+/// A settings page: one top-aligned content column that reports its natural
+/// height, so the window can size to the page instead of leaving dead space
+/// under a short form. Pages taller than the ceiling scroll.
+struct SettingsPage<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    @State private var naturalHeight: CGFloat = SettingsMetrics.minPageHeight
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: Theme.Space.l) {
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(SettingsMetrics.pageInsets)
+            // Ideal height, not the proposal: the page is measured to size the
+            // window, so it must never stretch to whatever the window already is.
+            .fixedSize(horizontal: false, vertical: true)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: SettingsPageHeightKey.self, value: proxy.size.height)
+                }
+            )
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .onPreferenceChange(SettingsPageHeightKey.self) { height in
+            guard height > 0 else { return }
+            NSLog("WCDEBUG page height %f", height)
+            naturalHeight = height
+        }
+        .frame(height: min(max(naturalHeight, SettingsMetrics.minPageHeight),
+                           SettingsMetrics.maxPageHeight))
+    }
+}
+
+private struct SettingsPageHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// A titled group: a section heading with an optional count badge, one card of
+/// rows, and optional explanatory text underneath the card.
+struct SettingsSection<Content: View>: View {
+    let title: String
+    var count: Int? = nil
+    var footnote: String? = nil
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            SectionHeader(title: title) {
+                if let count { Badge(text: "\(count)") }
+            }
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .commandCard()
+            if let footnote {
+                Text(LocalizedStringKey(footnote))
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 2)
+            }
+        }
+        .background(GeometryReader { p in
+            Color.clear.onAppear { NSLog("WCDEBUG section %@ %f", title, p.size.height) }
+        })
+    }
+}
+
+/// The hairline between rows inside a section card.
+struct SettingsRowDivider: View {
+    var body: some View {
+        Rectangle().fill(Theme.divider).frame(height: 1)
+    }
+}
+
+/// A switch row: title, optional explanation, and the control on the trailing
+/// edge so a column of them aligns.
+struct SettingsToggleRow: View {
+    let title: String
+    var detail: String? = nil
+    @Binding var isOn: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.m) {
+                Text(LocalizedStringKey(title))
+                    .font(Theme.ui(13))
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: Theme.Space.m)
+                Toggle("", isOn: $isOn)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .accessibilityLabel(LocalizedStringKey(title))
+            }
+            if let detail {
+                Text(LocalizedStringKey(detail))
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// A single line of state ("Signed in to iCloud", "Listening on 127.0.0.1…").
+/// The glyph carries the same tint as the text so the line reads as one object.
+struct SettingsStatusLine: View {
+    let text: String
+    let systemImage: String
+    var tint: Color = Theme.secondaryText
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+            Text(LocalizedStringKey(text))
+                .font(Theme.ui(11, .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(tint)
+    }
+}
+
+/// Body copy inside a card — an explanation that belongs to the rows above it.
+struct SettingsNote: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(LocalizedStringKey(text))
+            .font(Theme.ui(11))
+            .foregroundStyle(Theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -35,98 +323,149 @@ struct GitHubSettingsTab: View {
     @State private var status: String?
     @State private var statusOK = false
     @State private var verifying = false
+    @FocusState private var focus: Field?
+
+    private enum Field { case label, token }
 
     private var hasDefault: Bool { !(settings.githubToken ?? "").isEmpty }
 
-    var body: some View {
-        Form {
-            Section {
-                if hasDefault {
-                    accountRow(title: "Default account",
-                               subtitle: "Used by sites with no specific account",
-                               tint: Theme.accent,
-                               removeLabel: "Clear") {
-                        settings.setGitHubToken("")
-                        status = "Default token removed."
-                        statusOK = true
-                    }
-                }
-                ForEach(settings.githubAccounts) { account in
-                    let hasTok = !(settings.token(forCredential: account.id) ?? "").isEmpty
-                    accountRow(title: account.displayName,
-                               subtitle: hasTok ? "Personal access token stored" : "Token missing",
-                               tint: hasTok ? Theme.success : Theme.warning,
-                               removeLabel: "Remove") {
-                        settings.removeGitHubAccount(account.id)
-                        status = "Removed \(account.displayName)."
-                        statusOK = true
-                    }
-                }
-                if !hasDefault && settings.githubAccounts.isEmpty {
-                    Text("No GitHub accounts yet. Add one below to connect your sites.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-            } header: {
-                HStack {
-                    Text("Accounts")
-                    Spacer()
-                    Text("\(settings.accountOptions.count)")
-                        .foregroundStyle(.secondary)
-                }
-            } footer: {
-                Text("Each site uses one account. Add as many as you need — e.g. one for work, one for personal repos. Tokens are stored only in the macOS Keychain.")
-            }
-
-            Section {
-                HStack(spacing: Theme.Space.m) {
-                    TextField("Label (e.g. Work)", text: $newLabel)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 140)
-                    SecureField("ghp_… or github_pat_…", text: $newToken)
-                        .textFieldStyle(.roundedBorder)
-                }
-                HStack {
-                    Button {
-                        Task { await verifyAndAdd() }
-                    } label: {
-                        if verifying { ProgressView().controlSize(.small) }
-                        else { Label("Verify & Add", systemImage: "person.badge.plus") }
-                    }
-                    .buttonStyle(.primary)
-                    .disabled(newToken.trimmingCharacters(in: .whitespaces).isEmpty || verifying)
-                    HelpButton(title: "Creating a GitHub token",
-                               message: "Generate a classic Personal Access Token with the `repo` scope so the agent can read and write your repositories. We verify it (and fetch your username) before storing it in the Keychain.",
-                               links: [("github.com/settings/tokens", "https://github.com/settings/tokens")])
-                }
-                if let status {
-                    Label(status, systemImage: statusOK ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(statusOK ? Theme.success : Theme.danger)
-                        .font(.callout)
-                }
-            } header: {
-                Text("Add Account")
-            }
-        }
-        .formStyle(.grouped)
-        .padding(Theme.Space.l)
+    private var canVerify: Bool {
+        !newToken.trimmingCharacters(in: .whitespaces).isEmpty && !verifying
     }
 
-    private func accountRow(title: String, subtitle: String, tint: Color, removeLabel: String,
-                            remove: @escaping () -> Void) -> some View {
-        HStack(spacing: Theme.Space.m) {
-            IconTile(systemImage: "person.crop.circle.fill", tint: tint, size: 34, gradient: false)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.body.weight(.medium))
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            StatusDot(color: tint)
-            Button(removeLabel, action: remove)
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.danger)
-                .font(.callout)
+    var body: some View {
+        SettingsPage {
+            accountsSection
+            addAccountSection
         }
-        .padding(.vertical, 2)
+    }
+
+    // MARK: Accounts
+
+    private var accountsSection: some View {
+        SettingsSection(
+            title: "Accounts",
+            count: settings.accountOptions.count,
+            footnote: "Each site uses one account. Add as many as you need — e.g. one for work, one for personal repos. Tokens are stored only in the macOS Keychain."
+        ) {
+            if rows.isEmpty {
+                SettingsNote("No GitHub accounts yet. Add one below to connect your sites.")
+            } else {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                    if index > 0 { SettingsRowDivider() }
+                    accountRow(row)
+                }
+            }
+        }
+    }
+
+    /// The account list, flattened so the default token and the named accounts
+    /// render through one row treatment.
+    private var rows: [AccountRow] {
+        var result: [AccountRow] = []
+        if hasDefault {
+            result.append(AccountRow(
+                id: "default",
+                title: "Default account",
+                subtitle: "Used by sites with no specific account",
+                statusLabel: "Stored token is valid",
+                tint: Theme.accent,
+                removeLabel: "Clear",
+                remove: {
+                    settings.setGitHubToken("")
+                    status = "Default token removed."
+                    statusOK = true
+                }))
+        }
+        for account in settings.githubAccounts {
+            let hasToken = !(settings.token(forCredential: account.id) ?? "").isEmpty
+            result.append(AccountRow(
+                id: account.id.uuidString,
+                title: account.displayName,
+                subtitle: hasToken ? "Personal access token stored" : "Token missing",
+                statusLabel: hasToken ? "Stored token is valid" : "No token stored for this account",
+                tint: hasToken ? Theme.success : Theme.warning,
+                removeLabel: "Remove",
+                remove: {
+                    settings.removeGitHubAccount(account.id)
+                    status = "Removed \(account.displayName)."
+                    statusOK = true
+                }))
+        }
+        return result
+    }
+
+    private struct AccountRow: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        /// What the status dot means, for anyone who can't read the colour.
+        let statusLabel: String
+        let tint: Color
+        let removeLabel: String
+        let remove: () -> Void
+    }
+
+    private func accountRow(_ row: AccountRow) -> some View {
+        HStack(spacing: Theme.Space.m) {
+            IconTile(systemImage: "person.crop.circle.fill", accent: .neutral, size: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(LocalizedStringKey(row.title))
+                    .font(Theme.ui(13, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(LocalizedStringKey(row.subtitle))
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.secondaryText)
+            }
+            Spacer(minLength: Theme.Space.m)
+            StatusDot(color: row.tint, label: row.statusLabel)
+            Button(LocalizedStringKey(row.removeLabel), action: row.remove)
+                .buttonStyle(.destructiveText)
+                .accessibilityLabel("\(row.removeLabel) \(row.title)")
+        }
+    }
+
+    // MARK: Add account
+
+    private var addAccountSection: some View {
+        SettingsSection(title: "Add Account") {
+            FormRow(label: "Label",
+                    help: HelpButton(title: "Account label",
+                                     message: "A name you'll recognise in the account picker — e.g. Work or Personal. Leave it blank and the GitHub username the token belongs to is used instead.")) {
+                TextField("e.g. Work", text: $newLabel)
+                    .focused($focus, equals: .label)
+                    .fieldChrome(focused: focus == .label)
+            }
+            FormRow(label: "Personal access token",
+                    footnote: "ghp_… or github_pat_…") {
+                SecureField("Paste your token", text: $newToken)
+                    .focused($focus, equals: .token)
+                    .fieldChrome(focused: focus == .token)
+            }
+            SettingsRowDivider()
+            HStack(spacing: Theme.Space.s) {
+                Button {
+                    Task { await verifyAndAdd() }
+                } label: {
+                    Label("Verify & Add", systemImage: "person.badge.plus")
+                        // The label keeps its width while verifying, so the
+                        // button doesn't collapse to a spinner and back.
+                        .opacity(verifying ? 0 : 1)
+                        .overlay { if verifying { ProgressView().controlSize(.small) } }
+                }
+                .buttonStyle(.primary)
+                .disabled(!canVerify)
+                HelpButton(title: "Creating a GitHub token",
+                           message: "Generate a classic Personal Access Token with the `repo` scope so the agent can read and write your repositories. We verify it (and fetch your username) before storing it in the Keychain.",
+                           links: [("github.com/settings/tokens", "https://github.com/settings/tokens")])
+                Spacer(minLength: 0)
+            }
+            if let status {
+                SettingsStatusLine(text: status,
+                                   systemImage: statusOK ? "checkmark.circle.fill" : "xmark.circle.fill",
+                                   tint: statusOK ? Theme.success : Theme.danger)
+            }
+        }
     }
 
     private func verifyAndAdd() async {
@@ -169,6 +508,9 @@ struct GitHubSettingsTab: View {
 struct ProviderSettingsTab: View {
     @EnvironmentObject var settings: SettingsStore
     @State private var key = ""
+    @FocusState private var focus: Field?
+
+    private enum Field { case baseURL, customModel, apiKey }
 
     private var info: ProviderInfo? { ProviderRegistry.info(for: settings.providerID) }
 
@@ -185,9 +527,15 @@ struct ProviderSettingsTab: View {
     }
 
     var body: some View {
-        Form {
-            Section("Provider") {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: Theme.Space.s)],
+        SettingsPage {
+            SettingsSection(title: "Provider") {
+                // Flexible columns, not `.adaptive`: the settings window has a
+                // fixed width, and adaptive chips would sit at their minimum
+                // size with dead space trailing every row.
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0),
+                                                            spacing: Theme.Space.s),
+                                         count: 3),
+                          alignment: .leading,
                           spacing: Theme.Space.s) {
                     ForEach(ProviderRegistry.catalog) { provider in
                         ProviderChip(provider: provider, isSelected: provider.id == settings.providerID) {
@@ -197,69 +545,93 @@ struct ProviderSettingsTab: View {
                         }
                     }
                 }
-                .padding(.vertical, Theme.Space.xs)
             }
 
             if settings.providerID == "custom" {
-                Section("Custom Endpoint") {
-                    TextField("Base URL (https://…/v1)", text: $settings.customBaseURL)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Model name", text: $settings.customModel)
-                        .textFieldStyle(.roundedBorder)
+                SettingsSection(title: "Custom Endpoint") {
+                    FormRow(label: "Base URL") {
+                        TextField("https://…/v1", text: $settings.customBaseURL)
+                            .focused($focus, equals: .baseURL)
+                            .fieldChrome(focused: focus == .baseURL)
+                    }
+                    FormRow(label: "Model name") {
+                        TextField("", text: $settings.customModel)
+                            .focused($focus, equals: .customModel)
+                            .fieldChrome(focused: focus == .customModel)
+                    }
                 }
             }
 
-            Section("Model") {
-                Picker("Model", selection: $settings.model) {
-                    Text("Default (\(defaultModelLabel))").tag("")
-                    ForEach(modelList, id: \.self) { model in
-                        Text(info?.modelLabel(model) ?? model).tag(model)
+            SettingsSection(title: "Model") {
+                FormRow(label: "Model") {
+                    Picker("", selection: $settings.model) {
+                        Text("Default (\(defaultModelLabel))").tag("")
+                        ForEach(modelList, id: \.self) { model in
+                            Text(info?.modelLabel(model) ?? model).tag(model)
+                        }
                     }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .font(Theme.ui(13))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel("Model")
                 }
             }
 
             if settings.providerID == "ondevice" {
-                Section("On-Device AI") {
-                    Label(onDeviceStatus, systemImage: onDeviceAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(onDeviceAvailable ? Theme.success : Theme.warning)
-                    Text("Runs fully offline using Apple Intelligence. No API key required.")
-                        .font(.caption).foregroundStyle(.secondary)
+                SettingsSection(title: "On-Device AI") {
+                    SettingsStatusLine(text: onDeviceStatus,
+                                       systemImage: onDeviceAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                                       tint: onDeviceAvailable ? Theme.success : Theme.warning)
+                    SettingsNote("Runs fully offline using Apple Intelligence. No API key required.")
                 }
             } else {
-                Section {
-                    SecureField(info?.keyLabel ?? "API Key", text: $key)
-                        .onAppear { key = settings.apiKey(for: settings.providerID) ?? "" }
-                    Button("Save Key") {
-                        settings.setAPIKey(key.trimmingCharacters(in: .whitespaces), for: settings.providerID)
+                SettingsSection(title: "API Key",
+                                footnote: "Stored only in the macOS Keychain. Direct API calls — no proxy servers.") {
+                    FormRow(label: info?.keyLabel ?? "API Key") {
+                        SecureField("", text: $key)
+                            .focused($focus, equals: .apiKey)
+                            .fieldChrome(focused: focus == .apiKey)
+                            .onAppear { key = settings.apiKey(for: settings.providerID) ?? "" }
                     }
-                    .buttonStyle(.primary)
-                    if let url = info?.keySourceURL, !url.isEmpty {
-                        Link("Get a key →", destination: URL(string: url)!)
-                            .font(.callout)
+                    SettingsRowDivider()
+                    HStack(spacing: Theme.Space.m) {
+                        Button("Save Key") {
+                            settings.setAPIKey(key.trimmingCharacters(in: .whitespaces), for: settings.providerID)
+                        }
+                        .buttonStyle(.primary)
+                        if let url = info?.keySourceURL, !url.isEmpty {
+                            Link(destination: URL(string: url)!) {
+                                HStack(spacing: 4) {
+                                    Text("Get a key")
+                                    Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .bold))
+                                }
+                                .font(Theme.ui(12, .semibold))
+                            }
+                        }
+                        Spacer(minLength: 0)
                     }
-                } header: {
-                    Text("API Key")
-                } footer: {
-                    Text("Stored only in the macOS Keychain. Direct API calls — no proxy servers.")
                 }
             }
 
-            Section("Smart Routing") {
-                Toggle("Auto-route to the best model", isOn: $settings.smartRouting)
+            SettingsSection(title: "Smart Routing") {
+                SettingsToggleRow(title: "Auto-route to the best model",
+                                  isOn: $settings.smartRouting)
                 if settings.smartRouting {
-                    Picker("Strategy", selection: $settings.routingStrategy) {
-                        ForEach(RoutingStrategy.allCases) { strategy in
-                            Text(strategy.rawValue).tag(strategy)
+                    SettingsRowDivider()
+                    FormRow(label: "Strategy", footnote: settings.routingStrategy.detail) {
+                        Picker("", selection: $settings.routingStrategy) {
+                            ForEach(RoutingStrategy.allCases) { strategy in
+                                Text(strategy.rawValue).tag(strategy)
+                            }
                         }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .accessibilityLabel("Strategy")
                     }
-                    .pickerStyle(.segmented)
-                    Text(settings.routingStrategy.detail)
-                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
-        .formStyle(.grouped)
-        .padding(Theme.Space.l)
     }
 
     private var modelList: [String] {
@@ -287,25 +659,68 @@ private struct ProviderChip: View {
                 Group {
                     if let mark = BrandMarkID.from(providerID: provider.id) {
                         BrandMark(id: mark)
-                            .fill(isSelected ? Color.white : Color.primary)
+                            .fill(isSelected ? Theme.textInverse : Theme.textPrimary)
                     } else {
                         Image(systemName: provider.icon)
-                            .foregroundStyle(isSelected ? .white : Theme.secondaryText)
+                            .font(.system(size: 13, weight: .medium))
                     }
                 }
-                .frame(width: 18, height: 18)
+                .frame(width: 16, height: 16)
                 Text(provider.displayName)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(isSelected ? .white : .primary)
-                Spacer()
+                    .font(Theme.ui(12, .semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, Theme.Space.m)
-            .padding(.vertical, Theme.Space.s)
-            .background(
-                isSelected ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Color.primary.opacity(0.05)),
-                in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ProviderChipStyle(isSelected: isSelected))
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
+private struct ProviderChipStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        Surface(configuration: configuration, isSelected: isSelected)
+    }
+
+    private struct Surface: View {
+        let configuration: Configuration
+        let isSelected: Bool
+
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var isHovering = false
+
+        private let shape = RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(isSelected ? Theme.textInverse : Theme.textPrimary)
+                .padding(.horizontal, Theme.Space.m)
+                .padding(.vertical, Theme.Space.s)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(fill, in: shape)
+                .overlay {
+                    shape.strokeBorder(isSelected ? .clear : Theme.borderSubtle, lineWidth: 1)
+                }
+                .focusRing(isFocused, cornerRadius: Theme.Radius.medium)
+                .contentShape(shape)
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+                .animation(Theme.Chrome.Timing.press, value: configuration.isPressed)
+                .animation(Theme.Chrome.Timing.selection, value: isSelected)
+                .animation(Theme.Chrome.Timing.hover, value: isHovering)
+                .onHover { isHovering = $0 }
+        }
+
+        private var fill: Color {
+            if isSelected {
+                if configuration.isPressed { return Theme.accentPressed }
+                return isHovering ? Theme.accentHover : Theme.accent
+            }
+            if configuration.isPressed { return Theme.Chrome.controlPressed }
+            return isHovering ? Theme.tertiarySurface : Theme.secondarySurface
+        }
     }
 }
 
@@ -315,127 +730,140 @@ struct BehaviorSettingsTab: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var cloudSync: CloudSyncService
     @EnvironmentObject var bridge: LocalBridge
+    @FocusState private var portFocused: Bool
 
     var body: some View {
-        Form {
-            Section("Agent") {
-                Toggle("Auto-commit (skip the approval step)", isOn: $settings.autoCommit)
-                Text("When on, approved edits commit immediately without a diff review. Recommended off.")
-                    .font(.caption).foregroundStyle(.secondary)
+        SettingsPage {
+            SettingsSection(title: "Agent") {
+                SettingsToggleRow(
+                    title: "Auto-commit (skip the approval step)",
+                    detail: "When on, approved edits commit immediately without a diff review. Recommended off.",
+                    isOn: $settings.autoCommit)
             }
-            Section("Appearance") {
-                Picker("Appearance", selection: $settings.themeMode) {
-                    ForEach(ThemeMode.allCases) { mode in
-                        Label(mode.rawValue, systemImage: mode.icon).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
 
-                Text(settings.themeMode == .system
-                     ? "Follows your Mac appearance automatically."
-                     : settings.themeMode == .light
-                        ? "A bright, high-contrast workspace for daylight use."
-                        : "A low-luminance workspace for dim environments.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondaryText)
-            }
-            Section {
-                Toggle("Play notification sounds", isOn: $settings.notificationSoundsEnabled)
-                if settings.notificationSoundsEnabled {
-                    soundPicker(
-                        title: "Task completed",
-                        selection: $settings.completionSound
-                    )
-                    soundPicker(
-                        title: "Task failed",
-                        selection: $settings.errorSound
-                    )
+            SettingsSection(title: "Appearance") {
+                FormRow(label: "Appearance", footnote: appearanceDetail) {
+                    Picker("", selection: $settings.themeMode) {
+                        ForEach(ThemeMode.allCases) { mode in
+                            Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Appearance")
                 }
-            } header: {
-                Text("Sounds")
-            } footer: {
-                Text("Short system sounds play when an agent task finishes or needs attention.")
             }
-            Section {
-                Toggle("Sync workspaces & preferences via iCloud", isOn: $settings.cloudSyncEnabled)
+
+            SettingsSection(title: "Sounds",
+                            footnote: "Short system sounds play when an agent task finishes or needs attention.") {
+                SettingsToggleRow(title: "Play notification sounds",
+                                  isOn: $settings.notificationSoundsEnabled)
+                if settings.notificationSoundsEnabled {
+                    SettingsRowDivider()
+                    soundPicker(title: "Task completed", selection: $settings.completionSound)
+                    soundPicker(title: "Task failed", selection: $settings.errorSound)
+                }
+            }
+
+            SettingsSection(title: "iCloud Sync") {
+                SettingsToggleRow(title: "Sync workspaces & preferences via iCloud",
+                                  isOn: $settings.cloudSyncEnabled)
                     .onChange(of: settings.cloudSyncEnabled) { _, on in
                         if on { cloudSync.push(settings) }
                     }
-                Label(CloudSyncService.isSignedIn
-                      ? "Signed in to iCloud. Secrets (API keys, tokens) never sync."
-                      : "Not signed in to iCloud — sync is inactive.",
-                      systemImage: CloudSyncService.isSignedIn ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(CloudSyncService.isSignedIn ? Theme.success : Theme.warning)
-            } header: {
-                Text("iCloud Sync")
+                SettingsStatusLine(
+                    text: CloudSyncService.isSignedIn
+                        ? "Signed in to iCloud. Secrets (API keys, tokens) never sync."
+                        : "Not signed in to iCloud — sync is inactive.",
+                    systemImage: CloudSyncService.isSignedIn ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                    tint: CloudSyncService.isSignedIn ? Theme.success : Theme.warning)
             }
-            Section {
-                Toggle("Allow local agent connections", isOn: $settings.localBridgeEnabled)
-                if bridge.isRunning, let port = bridge.port {
-                    Label("Listening on 127.0.0.1:\(port) (loopback only)",
-                          systemImage: "lock.shield.fill")
-                        .font(.caption).foregroundStyle(Theme.success)
-                    HStack {
-                        Text("Token file").font(.caption).foregroundStyle(.secondary)
-                        Text(LocalBridge.tokenFileURL.path)
-                            .font(.system(.caption2, design: .monospaced))
-                            .textSelection(.enabled).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Button("Copy token") {
-                            if let t = LocalBridge.readPublishedToken() {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(t, forType: .string)
-                            }
-                        }
-                        .buttonStyle(.primarySoft)
-                    }
-                    Text("Any program on this Mac that reads the token file can drive the app. Keep it off when not in use.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                } else if settings.localBridgeEnabled {
-                    if let err = bridge.lastError {
-                        Label(err, systemImage: "xmark.octagon.fill")
-                            .font(.caption).foregroundStyle(Theme.danger)
-                    } else {
-                        Label("Starting…", systemImage: "hourglass").font(.caption).foregroundStyle(.secondary)
-                    }
-                } else {
-                    Label("Off — no socket is open.", systemImage: "power")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                HStack(spacing: 6) {
-                    Text("Port").font(.caption).foregroundStyle(.secondary)
+
+            SettingsSection(title: "Local Agent Bridge",
+                            footnote: "Lets Codex, Cursor, opencode, or scripts on this Mac list sites, run the agent, and pull debug briefs over a token-authenticated loopback socket. Off by default; never exposed to the network.") {
+                SettingsToggleRow(title: "Allow local agent connections",
+                                  isOn: $settings.localBridgeEnabled)
+                SettingsRowDivider()
+                bridgeState
+                FormRow(label: "Port",
+                        footnote: settings.localBridgeEnabled ? "Restart the bridge to apply a new port." : nil) {
                     TextField("0 = auto", value: $settings.localBridgePort, format: .number)
-                        .textFieldStyle(.roundedBorder).frame(width: 90)
-                    Text(settings.localBridgeEnabled ? "(restart to apply)" : "")
-                        .font(.caption2).foregroundStyle(.tertiary)
+                        .focused($portFocused)
+                        .fieldChrome(focused: portFocused)
+                        .frame(width: 110)
+                        .accessibilityLabel("Port")
                 }
-            } header: {
-                Text("Local Agent Bridge")
-            } footer: {
-                Text("Lets Codex, Cursor, opencode, or scripts on this Mac list sites, run the agent, and pull debug briefs over a token-authenticated loopback socket. Off by default; never exposed to the network.")
             }
         }
-        .formStyle(.grouped)
-        .padding(Theme.Space.l)
     }
 
-    private func soundPicker(title: LocalizedStringKey,
-                             selection: Binding<NotificationSound>) -> some View {
-        HStack {
-            Picker(title, selection: selection) {
-                ForEach(NotificationSound.allCases) { sound in
-                    Text(sound.rawValue).tag(sound)
+    private var appearanceDetail: String {
+        switch settings.themeMode {
+        case .system: return "Follows your Mac appearance automatically."
+        case .light:  return "A bright, high-contrast workspace for daylight use."
+        default:      return "A low-luminance workspace for dim environments."
+        }
+    }
+
+    @ViewBuilder private var bridgeState: some View {
+        if bridge.isRunning, let port = bridge.port {
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                SettingsStatusLine(text: "Listening on 127.0.0.1:\(port) (loopback only)",
+                                   systemImage: "lock.shield.fill",
+                                   tint: Theme.success)
+                HStack(spacing: Theme.Space.s) {
+                    FieldHeader(label: "Token file")
+                    Text(LocalBridge.tokenFileURL.path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Theme.secondaryText)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: Theme.Space.s)
+                    Button("Copy token") {
+                        if let token = LocalBridge.readPublishedToken() {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(token, forType: .string)
+                        }
+                    }
+                    .buttonStyle(.primarySoft)
+                    .controlSize(.small)
                 }
+                SettingsNote("Any program on this Mac that reads the token file can drive the app. Keep it off when not in use.")
             }
-            Button {
-                AudioNotificationPlayer.play(selection.wrappedValue)
-            } label: {
-                Image(systemName: "speaker.wave.2.fill")
+        } else if settings.localBridgeEnabled {
+            if let error = bridge.lastError {
+                SettingsStatusLine(text: error, systemImage: "xmark.octagon.fill", tint: Theme.danger)
+            } else {
+                SettingsStatusLine(text: "Starting…", systemImage: "hourglass")
             }
-            .buttonStyle(.borderless)
-            .help("Preview sound")
-            .accessibilityLabel("Preview \(selection.wrappedValue.rawValue) sound")
+        } else {
+            SettingsStatusLine(text: "Off — no socket is open.", systemImage: "power")
+        }
+    }
+
+    private func soundPicker(title: String,
+                             selection: Binding<NotificationSound>) -> some View {
+        FormRow(label: title) {
+            HStack(spacing: Theme.Space.s) {
+                Picker("", selection: selection) {
+                    ForEach(NotificationSound.allCases) { sound in
+                        Text(sound.rawValue).tag(sound)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .font(Theme.ui(13))
+                .accessibilityLabel(LocalizedStringKey(title))
+                Button {
+                    AudioNotificationPlayer.play(selection.wrappedValue)
+                } label: {
+                    Image(systemName: "speaker.wave.2.fill")
+                }
+                .buttonStyle(.iconCompact)
+                .help("Preview sound")
+                .accessibilityLabel("Preview \(selection.wrappedValue.rawValue) sound")
+            }
         }
     }
 }
@@ -445,46 +873,88 @@ struct BehaviorSettingsTab: View {
 struct AboutSettingsTab: View {
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var updater: UpdateChecker
+    @FocusState private var feedFocused: Bool
 
     var body: some View {
-        VStack(spacing: Theme.Space.m) {
-            BrandIllustration(size: 72)
-            Text("Website Commander").font(.title2.weight(.bold))
-            Text("Version \(UpdateChecker.currentVersion)").font(.callout).foregroundStyle(.secondary)
-            Text("The open-source, Mac-native website agent. Edit your sites with plain English, review every change, and ship.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
+        SettingsPage {
+            VStack(spacing: Theme.Space.s) {
+                BrandIllustration(size: 64)
+                Text("Website Commander")
+                    .font(Theme.ui(17, .bold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("Version \(UpdateChecker.currentVersion)")
+                    .font(Theme.ui(11, .semibold))
+                    .foregroundStyle(Theme.secondaryText)
+                Text("The open-source, Mac-native website agent. Edit your sites with plain English, review every change, and ship.")
+                    .font(Theme.ui(12))
+                    .foregroundStyle(Theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 380)
+            }
+            .frame(maxWidth: .infinity)
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 5) {
-                    Text("Update feed URL").font(.caption).foregroundStyle(.secondary)
-                    HelpButton(title: "Update feed",
-                               message: "Point this at a JSON file on your website: {\"version\":\"1.1.0\",\"url\":\"…zip\",\"notes\":\"…\"}. The app only ever fetches it when you choose Check for Updates — never in the background. Use https (http is allowed only on loopback, for testing).",
-                               links: [])
-                }
-                HStack {
-                    TextField("https://example.com/wc-update.json", text: $settings.updateFeedURL)
-                        .textFieldStyle(.roundedBorder)
-                    Button(updater.checking ? "…" : "Check") {
-                        Task { await updater.check(feedURL: settings.updateFeedURL) }
+            SettingsSection(title: "Updates",
+                            footnote: settings.updateFeedURL.trimmingCharacters(in: .whitespaces).isEmpty
+                                ? "Using \(UpdateChecker.defaultFeedURL)" : nil) {
+                FormRow(label: "Update feed URL",
+                        help: HelpButton(title: "Update feed",
+                                         message: "Leave this blank to use the built-in feed at mesut.uk. Override only if you host your own JSON: {\"version\":\"1.1.0\",\"url\":\"…zip\",\"sha256\":\"…\",\"notes\":\"…\"}. The app checks once shortly after launch and whenever you choose Check for Updates — it never polls in the background. Install verifies the ZIP checksum, replaces this app, and relaunches.",
+                                         links: [])) {
+                    HStack(spacing: Theme.Space.s) {
+                        TextField(UpdateChecker.defaultFeedURL, text: $settings.updateFeedURL)
+                            .focused($feedFocused)
+                            .fieldChrome(focused: feedFocused)
+                        Button(updater.checking ? "…" : "Check") {
+                            Task { await updater.check(feedURL: settings.updateFeedURL, userInitiated: true) }
+                        }
+                        .buttonStyle(.primarySoft)
+                        .controlSize(.small)
+                        .disabled(updater.checking || updater.installing)
                     }
-                    .buttonStyle(.primarySoft)
-                    .disabled(updater.checking)
                 }
-                if let err = updater.lastError {
-                    Text(err).font(.caption2).foregroundStyle(Theme.danger)
-                } else if settings.updateFeedURL.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Text("No feed set — Check for Updates is inactive.").font(.caption2).foregroundStyle(.tertiary)
+                updateState
+            }
+        }
+    }
+
+    @ViewBuilder private var updateState: some View {
+        if let error = updater.lastError {
+            SettingsStatusLine(text: error, systemImage: "xmark.circle.fill", tint: Theme.danger)
+        } else if updater.upToDate {
+            SettingsStatusLine(text: "You're on the latest version.",
+                               systemImage: "checkmark.circle.fill",
+                               tint: Theme.success)
+        } else if let release = updater.available {
+            SettingsRowDivider()
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                SettingsStatusLine(text: "Update \(release.version) is available.",
+                                   systemImage: "arrow.down.circle.fill",
+                                   tint: Theme.accent)
+                if !release.notes.isEmpty {
+                    SettingsNote(release.notes)
+                }
+                HStack(spacing: Theme.Space.s) {
+                    if release.sha256.count == 64 && release.url.lowercased().hasSuffix(".zip") {
+                        Button(updater.installing ? "Installing…" : "Install & Relaunch") {
+                            Task { await updater.installAndRelaunch(release) }
+                        }
+                        .buttonStyle(.primary)
+                        .controlSize(.small)
+                        .disabled(updater.installing)
+                    }
+                    if let url = URL(string: release.url), !release.url.isEmpty {
+                        Button("Download") { NSWorkspace.shared.open(url) }
+                            .buttonStyle(.primarySoft)
+                            .controlSize(.small)
+                    }
+                    Spacer(minLength: 0)
+                }
+                if updater.installing {
+                    ProgressView(value: updater.installProgress)
+                        .progressViewStyle(.linear)
                 }
             }
-            .frame(maxWidth: 420)
-            .padding(.top, Theme.Space.s)
-
-            Spacer()
         }
-        .padding(Theme.Space.xxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

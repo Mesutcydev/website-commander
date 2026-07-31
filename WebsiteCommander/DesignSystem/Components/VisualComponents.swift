@@ -6,7 +6,10 @@ import SwiftUI
 /// brand gradient only for a genuinely primary action.
 struct IconTile: View {
     let systemImage: String
-    var tint: Color = Theme.slateAccent
+    var tint: Color = Theme.secondaryText
+    /// The container behind the glyph. Defaults to a soft tint of `tint`, but a
+    /// semantic accent can supply its own paired surface.
+    var surface: Color?
     var size: CGFloat = 40
     var gradient: Bool = false
 
@@ -16,9 +19,21 @@ struct IconTile: View {
             .foregroundStyle(gradient ? .white : tint)
             .frame(width: size, height: size)
             .background(
-                gradient ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(tint.opacity(0.16)),
+                gradient ? AnyShapeStyle(Theme.brandGradient)
+                         : AnyShapeStyle(surface ?? tint.opacity(0.12)),
                 in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
             )
+    }
+}
+
+extension IconTile {
+    /// A tile in one of the app's semantic accents: accent glyph on its paired
+    /// soft surface.
+    init(systemImage: String, accent: Theme.Accent, size: CGFloat = 40) {
+        self.init(systemImage: systemImage,
+                  tint: accent.color,
+                  surface: accent.soft,
+                  size: size)
     }
 }
 
@@ -29,7 +44,7 @@ struct StatTile: View {
     let title: String
     let value: String
     let systemImage: String
-    var tint: Color = Theme.slateAccent
+    var tint: Color = Theme.secondaryText
     /// When set, the icon slot shows this official brand mark instead of the SF Symbol.
     var brandID: BrandMarkID? = nil
     /// When true, the value is rendered as a medium label (for words like a
@@ -45,7 +60,7 @@ struct StatTile: View {
                         .fill(tint)
                         .padding(7)
                         .frame(width: 34, height: 34)
-                        .background(tint.opacity(0.14),
+                        .background(tint.opacity(0.12),
                                     in: RoundedRectangle(cornerRadius: 34 * 0.28, style: .continuous))
                 } else {
                     IconTile(systemImage: systemImage, tint: tint, size: 34, gradient: false)
@@ -81,33 +96,41 @@ struct StatTile: View {
 
 // MARK: - Badge
 
-/// A small pill badge (tech stack, deployment target, status).
+/// A small pill badge (tech stack, deployment target, status). Neutral by
+/// default: a badge only takes an accent when the accent carries meaning.
 struct Badge: View {
     let text: String
     var systemImage: String? = nil
-    var tint: Color = .secondary
+    var tint: Color = Theme.secondaryText
+    /// The chip behind the label. Defaults to a soft tint of `tint`.
+    var surface: Color?
 
     var body: some View {
         HStack(spacing: 4) {
             if let systemImage {
-                Image(systemName: systemImage).font(.caption2)
+                Image(systemName: systemImage)
+                    .font(.system(size: 9.5, weight: .semibold))
             }
-            Text(text).font(.caption.weight(.medium))
+            Text(text).font(Theme.ui(11, .semibold))
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .foregroundStyle(tint)
-        .background(tint.opacity(0.14), in: Capsule())
+        .background(surface ?? tint.opacity(0.10), in: Capsule())
     }
 }
 
 // MARK: - Status dot
 
 /// A tiny colored presence dot (green = ready, amber = needs attention, etc.).
+/// A colour alone carries no meaning for screen readers or for anyone who can't
+/// separate the hues, so a dot that reports state takes a `label`; a purely
+/// decorative one stays hidden from assistive technology.
 struct StatusDot: View {
     var color: Color = Theme.success
     var pulse: Bool = false
     var size: CGFloat = 9
+    var label: String? = nil
 
     var body: some View {
         Circle()
@@ -117,6 +140,9 @@ struct StatusDot: View {
                 Circle().stroke(color.opacity(0.35), lineWidth: pulse ? 3 : 0)
             )
             .shadow(color: color.opacity(0.6), radius: pulse ? 4 : 1)
+            .help(label ?? "")
+            .accessibilityHidden(label == nil)
+            .accessibilityLabel(label ?? "")
     }
 }
 
@@ -132,10 +158,12 @@ struct SectionHeader<Accessory: View>: View {
         HStack(spacing: Theme.Space.s) {
             if let systemImage {
                 Image(systemName: systemImage)
-                    .foregroundStyle(Theme.slateAccent)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.secondaryText)
             }
             Text(LocalizedStringKey(title))
-                .font(.headline)
+                .font(Theme.ui(13, .semibold))
+                .foregroundStyle(Theme.textPrimary)
             Spacer()
             accessory
         }
@@ -152,40 +180,147 @@ extension SectionHeader where Accessory == EmptyView {
 
 // MARK: - Button styles
 
-/// The hero action style: brand gradient fill, white label, soft shadow.
+/// The hero action style: a solid primary fill and a white label. The brand
+/// gradient stays reserved for the product mark, so a button never competes
+/// with it.
 struct PrimaryButtonStyle: ButtonStyle {
     var prominent: Bool = true
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body.weight(.semibold))
-            .foregroundStyle(prominent ? .white : Theme.accent)
-            .padding(.horizontal, Theme.Space.l)
-            .padding(.vertical, Theme.Space.s + 2)
-            .background(
-                prominent ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Theme.accent.opacity(0.14)),
-                in: RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
-            )
-            .shadow(color: prominent ? Color.black.opacity(0.14) : .clear,
-                    radius: configuration.isPressed ? 1 : 5, y: 2)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+        Surface(configuration: configuration, prominent: prominent)
+    }
+
+    private struct Surface: View {
+        let configuration: Configuration
+        let prominent: Bool
+
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var isHovering = false
+
+        private let shape = RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
+
+        var body: some View {
+            configuration.label
+                .font(Theme.ui(13, .semibold))
+                .foregroundStyle(label)
+                .padding(.horizontal, Theme.Space.l)
+                .padding(.vertical, Theme.Space.s + 2)
+                .background(fill, in: shape)
+                .overlay {
+                    shape.strokeBorder(border, lineWidth: 1)
+                }
+                .focusRing(isFocused, cornerRadius: Theme.Radius.medium)
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+                .animation(Theme.Chrome.Timing.press, value: configuration.isPressed)
+                .animation(Theme.Chrome.Timing.hover, value: isHovering)
+                .onHover { isHovering = $0 }
+        }
+
+        /// Disabled is neutral, never a pale accent: a washed-out indigo reads as
+        /// an enabled control that has lost its colour.
+        private var fill: Color {
+            guard isEnabled else { return Theme.secondarySurface }
+            guard prominent else { return Theme.accentSoft }
+            if configuration.isPressed { return Theme.accentPressed }
+            return isHovering ? Theme.accentHover : Theme.accent
+        }
+
+        private var label: Color {
+            guard isEnabled else { return Theme.disabledText }
+            return prominent ? Theme.textInverse : Theme.accent
+        }
+
+        private var border: Color {
+            guard isEnabled else { return Theme.borderSubtle }
+            return prominent ? .clear : Theme.accentBorder
+        }
     }
 }
 
-/// A borderless icon button used in toolbars and card corners.
+/// A borderless icon button used in toolbars, card corners, and beside field
+/// headers.
 struct IconButtonStyle: ButtonStyle {
+    var size: CGFloat = 30
+    var glyphSize: CGFloat = 15
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 15, weight: .medium))
-            .foregroundStyle(.secondary)
-            .frame(width: 30, height: 30)
-            .background(
-                Circle().fill(Color.primary.opacity(configuration.isPressed ? 0.10 : 0.05))
-            )
-            .contentShape(Circle())
-            .scaleEffect(configuration.isPressed ? 0.9 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+        Surface(configuration: configuration, size: size, glyphSize: glyphSize)
+    }
+
+    private struct Surface: View {
+        let configuration: Configuration
+        let size: CGFloat
+        let glyphSize: CGFloat
+
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var isHovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: glyphSize, weight: .medium))
+                .foregroundStyle(label)
+                .frame(width: size, height: size)
+                .background(Circle().fill(fill))
+                .focusRing(isFocused, cornerRadius: size / 2)
+                .contentShape(Circle())
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+                .animation(Theme.Chrome.Timing.press, value: configuration.isPressed)
+                .animation(Theme.Chrome.Timing.hover, value: isHovering)
+                .onHover { isHovering = $0 }
+        }
+
+        private var fill: Color {
+            guard isEnabled else { return Theme.secondarySurface }
+            if configuration.isPressed { return Theme.Chrome.controlPressed }
+            return isHovering ? Theme.tertiarySurface : Theme.secondarySurface
+        }
+
+        private var label: Color {
+            guard isEnabled else { return Theme.disabledText }
+            return isHovering ? Theme.textPrimary : Theme.secondaryText
+        }
+    }
+}
+
+/// A quiet text button for a destructive row action ("Remove", "Clear"). The
+/// destructive tint only fills in on hover, so a list of rows stays calm.
+struct DestructiveTextButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Surface(configuration: configuration)
+    }
+
+    private struct Surface: View {
+        let configuration: Configuration
+
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var isHovering = false
+
+        var body: some View {
+            configuration.label
+                .font(Theme.ui(12, .semibold))
+                .foregroundStyle(isEnabled ? Theme.destructive : Theme.disabledText)
+                .padding(.horizontal, Theme.Space.s + 2)
+                .padding(.vertical, 5)
+                .background(fill, in: Capsule())
+                .focusRing(isFocused, shape: Capsule())
+                .contentShape(Capsule())
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+                .animation(Theme.Chrome.Timing.press, value: configuration.isPressed)
+                .animation(Theme.Chrome.Timing.hover, value: isHovering)
+                .onHover { isHovering = $0 }
+        }
+
+        private var fill: Color {
+            guard isEnabled else { return .clear }
+            if configuration.isPressed { return Theme.destructive.opacity(0.20) }
+            return isHovering ? Theme.destructiveSoft : .clear
+        }
     }
 }
 
@@ -196,6 +331,79 @@ extension ButtonStyle where Self == PrimaryButtonStyle {
 
 extension ButtonStyle where Self == IconButtonStyle {
     static var icon: IconButtonStyle { IconButtonStyle() }
+    /// The inline size, for a control that sits next to 11pt metadata.
+    static var iconCompact: IconButtonStyle { IconButtonStyle(size: 22, glyphSize: 12) }
+}
+
+extension ButtonStyle where Self == DestructiveTextButtonStyle {
+    static var destructiveText: DestructiveTextButtonStyle { DestructiveTextButtonStyle() }
+}
+
+// MARK: - Focus ring
+
+/// The one focus treatment in the app: an indigo border on the control's own
+/// edge plus a soft outer halo, so focus never relies on a colour swap alone.
+struct FocusRing<S: InsettableShape>: ViewModifier {
+    let focused: Bool
+    let shape: S
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                shape.strokeBorder(focused ? Theme.focusRing : .clear, lineWidth: 1.5)
+            }
+            .overlay {
+                shape.strokeBorder(focused ? Theme.focusRingHalo : .clear,
+                                   lineWidth: Theme.Activity.haloWidth)
+                    .padding(-Theme.Activity.haloWidth / 2)
+            }
+            .animation(Theme.Chrome.Timing.selection, value: focused)
+    }
+}
+
+extension View {
+    func focusRing<S: InsettableShape>(_ focused: Bool, shape: S) -> some View {
+        modifier(FocusRing(focused: focused, shape: shape))
+    }
+
+    func focusRing(_ focused: Bool, cornerRadius: CGFloat) -> some View {
+        focusRing(focused, shape: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+}
+
+// MARK: - Field chrome
+
+/// The shared look of a text entry: a level-3 surface, one hairline, a single
+/// height so stacked rows align, and the app's focus ring. Applying it also
+/// strips the platform bezel, so callers pass a bare `TextField`/`SecureField`.
+struct FieldChrome: ViewModifier {
+    let focused: Bool
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .font(Theme.ui(13))
+            .foregroundStyle(isEnabled ? Theme.textPrimary : Theme.disabledText)
+            .padding(.horizontal, Theme.Space.s + 2)
+            .frame(height: 28)
+            .background(isEnabled ? Theme.elevatedSurface : Theme.secondarySurface,
+                        in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
+                    .strokeBorder(isEnabled ? Theme.borderStandard : Theme.borderSubtle, lineWidth: 1)
+            }
+            .focusRing(focused, cornerRadius: Theme.Radius.small)
+    }
+}
+
+extension View {
+    /// Field chrome for a bare text entry. The caller owns focus (via
+    /// `@FocusState`) because only it knows the field's identity.
+    func fieldChrome(focused: Bool = false) -> some View {
+        modifier(FieldChrome(focused: focused))
+    }
 }
 
 // MARK: - Empty state
@@ -226,9 +434,9 @@ struct EmptyStateView: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: 34, height: 34)
-                    .background(Theme.brandGradient, in: Circle())
-                    .overlay(Circle().strokeBorder(.white.opacity(0.6), lineWidth: 2))
-                    .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+                    .background(Theme.accent, in: Circle())
+                    .overlay(Circle().strokeBorder(Theme.elevatedSurface, lineWidth: 2))
+                    .cardElevation()
                     .offset(x: 6, y: 6)
             }
             .padding(.bottom, Theme.Space.s)
@@ -294,18 +502,17 @@ struct HelpButton: View {
 
     var body: some View {
         Button { showing = true } label: {
-            Image(systemName: "questionmark.circle")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
+            Image(systemName: "questionmark")
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.iconCompact)
         .help(title)
+        .accessibilityLabel("Help: \(title)")
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: Theme.Space.m) {
-                Text(title).font(.headline)
+                Text(title).font(Theme.ui(13, .semibold))
                 Text(message)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(Theme.ui(12))
+                    .foregroundStyle(Theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                 if !links.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
@@ -338,9 +545,39 @@ struct FieldHeader: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(LocalizedStringKey(label))
+                .font(Theme.ui(11, .semibold))
+                .foregroundStyle(Theme.secondaryText)
             if let help { help }
         }
+    }
+}
+
+// MARK: - Form row
+
+/// One row of a form: a small header above a full-width field, with optional
+/// helper text underneath. Rows own the vertical rhythm so a stack of them
+/// aligns without any call site nudging padding.
+struct FormRow<Field: View>: View {
+    let label: String
+    var help: HelpButton? = nil
+    /// Guidance that belongs to the field — a format hint, a default, a caveat.
+    /// Never a second label: it sits below the field it describes.
+    var footnote: String? = nil
+    @ViewBuilder var field: Field
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            FieldHeader(label: label, help: help)
+            field
+            if let footnote {
+                Text(LocalizedStringKey(footnote))
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

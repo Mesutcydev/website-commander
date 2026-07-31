@@ -124,8 +124,8 @@ struct CommandPaletteView: View {
                     Image(systemName: action.systemImage)
                         .foregroundStyle(selected ? .white : Theme.secondaryText)
                         .frame(width: 30, height: 30)
-                        .background((selected ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Theme.raisedFill)),
-                                    in: RoundedRectangle(cornerRadius: 8))
+                        .background((selected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.secondarySurface)),
+                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
             }
             VStack(alignment: .leading, spacing: 1) {

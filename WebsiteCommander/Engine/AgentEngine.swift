@@ -144,7 +144,9 @@ final class AgentEngine: ObservableObject {
     var conversationStore: ConversationStore? {
         didSet { flushConversation() }
     }
-    @Published var currentConversationID: UUID?
+    @Published var currentConversationID: UUID? = nil {
+        didSet { rememberCurrentConversationID() }
+    }
     /// The workspace a conversation belongs to, captured when it starts so a
     /// site switch mid-chat cannot re-home an existing conversation.
     private(set) var currentConversationWorkspaceID: UUID?
@@ -171,11 +173,12 @@ final class AgentEngine: ObservableObject {
     // MARK: Session control
 
     func newChat() {
-        // Never drop work in progress: the outgoing chat lands on disk before
-        // the transcript is cleared.
-        flushConversation()
+        // Stop any in-flight run first so it cannot keep mutating after we clear.
         activeTask?.cancel()
         activeTask = nil
+        // Never drop work in progress: the outgoing chat lands on disk before
+        // the transcript is cleared.
+        finalizeInterruptedRun(notice: nil)
         withAutosaveSuspended {
             transcript = []
             currentConversationID = nil
@@ -192,10 +195,10 @@ final class AgentEngine: ObservableObject {
 
     /// Replace the live transcript with a saved conversation and rebuild context.
     func loadConversation(_ conv: SavedConversation) {
-        // Persist whatever was on screen before it is replaced.
-        flushConversation()
         activeTask?.cancel()
         activeTask = nil
+        // Persist whatever was on screen before it is replaced.
+        finalizeInterruptedRun(notice: nil)
         withAutosaveSuspended {
             transcript = conv.messages
             currentConversationID = conv.id
@@ -216,12 +219,26 @@ final class AgentEngine: ObservableObject {
         }
     }
 
+    /// After a crash/relaunch the engine starts empty even though the shell
+    /// restores the Agent destination — that empty idle surface reads as the
+    /// homepage. Reload the last open conversation so the interrupted turn is
+    /// still on screen.
+    func restoreLastConversationIfNeeded() {
+        guard transcript.isEmpty, currentConversationID == nil,
+              let store = conversationStore,
+              let raw = UserDefaults.standard.string(forKey: Self.currentConversationDefaultsKey),
+              let id = UUID(uuidString: raw),
+              let conv = store.conversation(id: id) else { return }
+        loadConversation(conv)
+    }
+
     // MARK: Autosave
 
     /// How long rapid transcript mutations coalesce before hitting disk. Long
     /// enough that a burst of tool rounds writes once, short enough that a user
     /// who quits right after a reply keeps it.
     static let autosaveDebounce: Duration = .milliseconds(500)
+    static let currentConversationDefaultsKey = "agent.currentConversationID"
 
     private var autosaveTask: Task<Void, Never>?
     private var autosaveSuspended = false
@@ -279,6 +296,14 @@ final class AgentEngine: ObservableObject {
         return saved
     }
 
+    private func rememberCurrentConversationID() {
+        if let id = currentConversationID {
+            UserDefaults.standard.set(id.uuidString, forKey: Self.currentConversationDefaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.currentConversationDefaultsKey)
+        }
+    }
+
     /// Explicit rename of the live conversation. Persistence itself is automatic;
     /// this only exists so the Conversations list can retitle a chat.
     @discardableResult
@@ -292,11 +317,55 @@ final class AgentEngine: ObservableObject {
         for name: Notification.Name in [NSApplication.willTerminateNotification,
                                         NSApplication.willResignActiveNotification,
                                         NSApplication.didHideNotification] {
+            // NotificationCenter's `.main` queue is not MainActor-isolated.
+            // `MainActor.assumeIsolated` traps (EXC_BREAKPOINT) when the app
+            // resigns mid-run — which looks exactly like "the model stopped and
+            // the app restarted". Hop through Task instead; streaming turns are
+            // also flushed on every transcript mutation via autosave.
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { _ = self?.flushConversation() }
+                Task { @MainActor [weak self] in
+                    _ = self?.flushConversation()
+                }
             }
         }
         #endif
+    }
+
+    /// Commit any in-flight live buffers into the transcript so an interrupted
+    /// run keeps its partial reply instead of vanishing on cancel/crash-adjacent
+    /// teardown. Pass `notice` when the interruption should be visible.
+    private func finalizeInterruptedRun(notice: String?) {
+        guard state.isActive else {
+            _ = flushConversation()
+            return
+        }
+        endStream()
+        let text = liveAssistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reasoning = liveReasoningText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let events = liveToolEvents
+        if !text.isEmpty || !reasoning.isEmpty {
+            transcript.append(ChatMessage(
+                role: .assistant,
+                text: text,
+                toolEvents: events,
+                reasoning: reasoning.isEmpty ? nil : reasoning
+            ))
+        } else if let notice, !notice.isEmpty {
+            transcript.append(ChatMessage(role: .assistant, text: notice, toolEvents: events))
+        } else if !events.isEmpty {
+            transcript.append(ChatMessage(role: .assistant, text: "", toolEvents: events))
+        }
+        if let notice, !notice.isEmpty {
+            // Visible in the transcript; don't also raise the error bar for a
+            // deliberate Stop — that bar is for real failures.
+            if notice != "Stopped." {
+                lastError = notice
+            }
+        }
+        liveToolEvents = []
+        clearLiveStreams()
+        state = pendingChanges.isEmpty ? .done : .awaitingApproval
+        flushConversation()
     }
 
     func rebuildSystemPrompt() {
@@ -456,10 +525,7 @@ final class AgentEngine: ObservableObject {
         guard state.isActive else { return }
         activeTask?.cancel()
         activeTask = nil
-        clearLiveStreams()
-        liveToolEvents = []
-        state = pendingChanges.isEmpty ? .done : .awaitingApproval
-        flushConversation()
+        finalizeInterruptedRun(notice: "Stopped.")
     }
 
     private func currentProvider() -> LLMProvider? {
@@ -584,6 +650,8 @@ final class AgentEngine: ObservableObject {
                     text: prose,
                     reasoning: turnReasoning
                 ))
+                // Crash mid-tool-loop is common; don't wait for the debounce.
+                flushConversation()
             }
             clearLiveStreams()
             context.append(.assistant(response.content, calls: response.toolCalls,

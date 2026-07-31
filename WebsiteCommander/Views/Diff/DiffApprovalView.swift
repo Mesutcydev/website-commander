@@ -105,7 +105,8 @@ struct DiffApprovalView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(change.path).font(.headline).textSelection(.enabled)
                 HStack(spacing: Theme.Space.s) {
-                    Badge(text: change.category.rawValue, systemImage: change.category.icon, tint: Theme.accent)
+                    Badge(text: change.category.rawValue, systemImage: change.category.icon,
+                          tint: Theme.tertiaryText, surface: Theme.secondarySurface)
                     Badge(text: change.isNewFile ? "New file" : "Modified",
                           systemImage: change.isNewFile ? "plus.circle.fill" : "pencil.circle.fill",
                           tint: change.isNewFile ? Theme.success : Theme.info)

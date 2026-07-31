@@ -40,9 +40,16 @@ struct ChatView: View {
     @State private var showAttachmentPicker = false
     @State private var attachmentError: String?
     @FocusState private var composerFocused: Bool
+    /// Focus chrome (indigo border + halo) only after an intentional edit
+    /// gesture. AppKit can make the field first responder on window activation;
+    /// without this gate the idle empty state would wear a permanent blue ring.
+    @State private var composerFocusChrome = false
     @State private var isNearTranscriptBottom = true
     @State private var hasUnseenActivity = false
     @State private var transcriptViewportHeight: CGFloat = 0
+
+    /// True when the composer should show its focused border treatment.
+    private var composerShowsFocus: Bool { composerFocused && composerFocusChrome }
 
     var body: some View {
         Group {
@@ -54,17 +61,23 @@ struct ChatView: View {
         }
         .animation(Motion.smooth, value: engine.pendingChanges.isEmpty)
         .onAppear {
-            // Moving first responder while the Agent destination and its
-            // WKWebView are entering the hierarchy can trigger a second AppKit
-            // layout cycle. Standalone chat may autofocus; the split workspace
-            // waits for an intentional click.
-            if !embedded {
-                composerFocused = true
-            }
             if let prompt = engine.prefilledPrompt {
                 draft = prompt
                 engine.prefilledPrompt = nil
             }
+            let hasDraft = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            // Resume an in-progress draft with focus chrome; otherwise keep the
+            // empty state quiet even if the field becomes first responder.
+            if hasDraft {
+                composerFocusChrome = true
+                if !embedded { composerFocused = true }
+            } else {
+                composerFocusChrome = false
+                DispatchQueue.main.async { composerFocused = false }
+            }
+        }
+        .onChange(of: composerFocused) { _, focused in
+            if !focused { composerFocusChrome = false }
         }
         .onChange(of: engine.prefilledPrompt) { _, newValue in
             if let newValue { draft = newValue; engine.prefilledPrompt = nil }
@@ -141,7 +154,9 @@ struct ChatView: View {
             if let error = engine.lastError {
                 errorBar(error)
             }
-            Divider()
+            Rectangle()
+                .fill(Theme.divider)
+                .frame(height: 1)
             composer(metrics: metrics)
         }
     }
@@ -167,7 +182,7 @@ struct ChatView: View {
         }
         .padding(.horizontal, Theme.Space.m)
         .padding(.vertical, Theme.Space.s)
-        .background(Theme.danger.opacity(0.10))
+        .background(Theme.destructiveSoft)
     }
 
     // MARK: Transcript
@@ -260,14 +275,21 @@ struct ChatView: View {
                 }
             }
             .onPreferenceChange(TranscriptBottomKey.self) { bottom in
-                // The coordinate space is the visible scroll viewport: a
-                // bottom within 96pt means following new output is intentional.
-                isNearTranscriptBottom = bottom <= transcriptViewportHeight + 96 || bottom.isZero
-                if isNearTranscriptBottom { hasUnseenActivity = false }
+                // Defer state writes off the layout/constraint pass. Updating
+                // @State during preference delivery (which runs while AppKit is
+                // inside updateConstraints) trips
+                // `_postWindowNeedsUpdateConstraints` and crashes the app mid
+                // stream — which relaunches into an empty Agent idle surface.
+                DispatchQueue.main.async {
+                    isNearTranscriptBottom = bottom <= transcriptViewportHeight + 96 || bottom.isZero
+                    if isNearTranscriptBottom { hasUnseenActivity = false }
+                }
             }
-            .onPreferenceChange(TranscriptViewportKey.self) { transcriptViewportHeight = $0 }
+            .onPreferenceChange(TranscriptViewportKey.self) { height in
+                DispatchQueue.main.async { transcriptViewportHeight = height }
+            }
             .onPreferenceChange(HeadingBottomKey.self) { top in
-                onScrolledUnder?(top < -2)
+                DispatchQueue.main.async { onScrolledUnder?(top < -2) }
             }
             .onChange(of: engine.transcript.count) { _, _ in
                 followBottom(proxy)
@@ -308,21 +330,22 @@ struct ChatView: View {
     }
 
     private func introRow(metrics: AgentWorkspaceMetrics) -> some View {
-        HStack(alignment: .center, spacing: Theme.Space.m) {
+        HStack(alignment: .center, spacing: Theme.Space.l - 2) {
             BrandIllustration(size: metrics.isNarrow ? 48 : 56)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("What should we change today?")
-                    .font(Theme.ui(metrics.isNarrow ? 16 : 19, .semibold))
+            VStack(alignment: .leading, spacing: 5) {
+                Text("What would you like to improve?")
+                    .font(Theme.ui(metrics.isNarrow ? 17 : 21, .bold))
                     .tracking(Theme.Typography.titleTracking)
-                    .foregroundStyle(Theme.Chrome.textPrimary)
+                    .foregroundStyle(Theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Describe it in plain English — the agent reads your repo and proposes edits for your approval.")
-                    .font(Theme.ui(13))
-                    .foregroundStyle(Theme.Chrome.textSecondary)
+                Text("Describe the outcome in plain language. The agent will inspect your repository, propose a plan, and wait for your approval before editing.")
+                    .font(Theme.ui(13.5))
+                    .foregroundStyle(Theme.secondaryText)
+                    .lineSpacing(3)
+                    .frame(maxWidth: 660, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: metrics.proseWidth, alignment: .leading)
 
             Spacer(minLength: Theme.Space.m)
 
@@ -331,10 +354,12 @@ struct ChatView: View {
                 VStack(alignment: .trailing, spacing: 5) {
                     Badge(text: workspace.techStack.rawValue,
                           systemImage: workspace.techStack.icon,
-                          tint: Theme.Chrome.textSecondary)
+                          tint: Theme.tertiaryText,
+                          surface: Theme.secondarySurface)
                     Badge(text: workspace.deployment.rawValue,
                           systemImage: "arrow.up.forward.square",
-                          tint: Theme.Chrome.textSecondary)
+                          tint: Theme.tertiaryText,
+                          surface: Theme.secondarySurface)
                 }
                 .fixedSize()
             }
@@ -344,17 +369,18 @@ struct ChatView: View {
     }
 
     private func smartTasksSection(metrics: AgentWorkspaceMetrics) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            HStack(spacing: Theme.Space.s) {
-                Text("Smart tasks")
-                    .font(Theme.ui(10.5, .semibold))
-                    .tracking(0.6)
-                    .textCase(.uppercase)
-                    .foregroundStyle(Theme.Chrome.textMuted)
-                Spacer()
+        VStack(alignment: .leading, spacing: Theme.Space.m - 2) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.violet)
+                Text("Suggested improvements")
+                    .font(Theme.ui(12, .semibold))
+                    .foregroundStyle(Theme.secondaryText)
+                Spacer(minLength: Theme.Space.s)
                 Text("Click to prefill the message")
                     .font(Theme.ui(11))
-                    .foregroundStyle(Theme.Chrome.textMuted)
+                    .foregroundStyle(Theme.tertiaryText)
             }
 
             LazyVGrid(
@@ -366,74 +392,27 @@ struct ChatView: View {
                 spacing: metrics.cardGap
             ) {
                 ForEach(smartTemplates) { template in
-                    Button {
+                    SmartTaskCard(
+                        template: template,
+                        metrics: metrics,
+                        recommended: isRecommended(template)
+                    ) {
                         draft = contextualPrompt(for: template)
+                        composerFocusChrome = true
                         composerFocused = true
-                    } label: {
-                        templateCard(
-                            template,
-                            metrics: metrics,
-                            recommended: isRecommended(template)
-                        )
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Starter task: \(template.title)")
-                    .accessibilityHint("\(template.subtitle). Fills the message field for editing.")
                 }
             }
         }
     }
 
-    private func templateCard(_ template: AgentTemplate,
-                              metrics: AgentWorkspaceMetrics,
-                              recommended: Bool) -> some View {
-        let compact = metrics.isNarrow
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: Theme.Space.s) {
-                Image(systemName: template.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(recommended ? Theme.Chrome.accent : Theme.Chrome.textSecondary)
-                    .frame(width: 26, height: 26)
-                    .background(recommended ? Theme.Chrome.accentTint : Theme.raisedFill,
-                                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                Spacer(minLength: 0)
-                if recommended {
-                    Text("Recommended")
-                        .font(Theme.ui(9, .bold))
-                        .foregroundStyle(Theme.Chrome.accent)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Theme.Chrome.accentTint, in: Capsule())
-                }
-            }
-            Text(LocalizedStringKey(template.title))
-                .font(Theme.ui(12.5, .semibold))
-                .foregroundStyle(Theme.Chrome.textPrimary)
-                .lineLimit(1)
-            Text(LocalizedStringKey(template.subtitle))
-                .font(Theme.ui(11.5))
-                .foregroundStyle(Theme.Chrome.textSecondary)
-                .lineLimit(compact ? 2 : 3)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(minHeight: metrics.taskCardMinHeight, alignment: .topLeading)
-        .padding(Theme.Space.m - 2)
-        .background(Theme.raisedFill,
-                    in: RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
-                .strokeBorder(Theme.hairline)
-        }
-        .contentShape(Rectangle())
-    }
-
-    private struct AgentTemplate: Identifiable {
+    struct AgentTemplate: Identifiable {
         let title: String
         let subtitle: String
         let icon: String
+        /// The category's semantic accent. Only the icon tile and the hover
+        /// detail use it — the card itself stays neutral.
+        let accent: Theme.Accent
         let prompt: String
         var stacks: [TechStack] = []
         var deployments: [DeploymentType] = []
@@ -471,8 +450,9 @@ struct ChatView: View {
     private static let templates: [AgentTemplate] = [
         AgentTemplate(
             title: "Core Web Vitals",
-            subtitle: "Improve LCP, INP, CLS, and perceived speed",
+            subtitle: "Improve loading speed, layout stability, and responsiveness.",
             icon: "gauge.with.dots.needle.67percent",
+            accent: .amber,
             prompt: """
             Audit and improve real-user performance.
             - Find likely LCP, INP, and CLS problems in the current code
@@ -486,8 +466,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Accessibility Review",
-            subtitle: "Fix WCAG 2.2, keyboard, focus, and reflow issues",
+            subtitle: "Review WCAG 2.2, keyboard access, focus, and motion.",
             icon: "accessibility",
+            accent: .rose,
             prompt: """
             Run a practical WCAG 2.2 accessibility review and fix objective issues.
             - Check semantic structure, labels, names, contrast, and error messaging
@@ -500,8 +481,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Security & Dependencies",
-            subtitle: "Prioritize exploitable risks and supply-chain gaps",
+            subtitle: "Find exploitable risks and outdated dependencies.",
             icon: "checkmark.shield",
+            accent: .green,
             prompt: """
             Audit this project for actionable web and supply-chain security risks.
             - Review dependencies and configuration for exposed secrets or unsafe defaults
@@ -514,8 +496,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Modern CSS System",
-            subtitle: "Adopt tokens, layers, and component-aware layouts",
+            subtitle: "Introduce tokens, layers, and reusable layout primitives.",
             icon: "paintbrush.pointed",
+            accent: .violet,
             prompt: """
             Modernize the CSS architecture without redesigning the site.
             - Consolidate repeated values into design tokens
@@ -529,8 +512,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Instant Navigation",
-            subtitle: "Add safe caching, prefetching, and resilient states",
+            subtitle: "Add safe caching, prefetching, and resilient navigation states.",
             icon: "bolt.horizontal.circle",
+            accent: .primary,
             prompt: """
             Make navigation feel instant and resilient.
             - Trace repeated data and asset requests across common navigation paths
@@ -545,8 +529,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Search & Sharing",
-            subtitle: "Upgrade metadata, structured data, and discovery",
+            subtitle: "Improve metadata, structured data, previews, and discovery.",
             icon: "magnifyingglass.circle",
+            accent: .violet,
             prompt: """
             Improve search-engine and social discovery using current standards.
             - Audit titles, descriptions, canonical URLs, robots directives, and sitemap coverage
@@ -559,8 +544,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Responsive UX",
-            subtitle: "Repair reflow, touch targets, and adaptive navigation",
+            subtitle: "Repair reflow, touch targets, and adaptive navigation.",
             icon: "rectangle.on.rectangle.angled",
+            accent: .cyan,
             prompt: """
             Test and improve responsive behavior from narrow phones through wide desktops.
             - Find horizontal overflow, clipped content, unsafe fixed dimensions, and awkward breakpoints
@@ -573,8 +559,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Conversion Flow",
-            subtitle: "Clarify the primary journey and reduce friction",
+            subtitle: "Clarify the primary journey and remove unnecessary friction.",
             icon: "point.topleft.down.to.point.bottomright.curvepath",
+            accent: .rose,
             prompt: """
             Review the site's primary conversion journey.
             - Identify the main user goal and unclear or competing calls to action
@@ -587,8 +574,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Quality Pipeline",
-            subtitle: "Add focused tests and safer pull-request checks",
+            subtitle: "Add focused tests and safer pull-request checks.",
             icon: "checkmark.seal",
+            accent: .green,
             prompt: """
             Strengthen the project's quality pipeline.
             - Identify critical paths currently lacking automated coverage
@@ -601,8 +589,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Image Delivery",
-            subtitle: "Modernize formats, sizing, loading, and alt text",
+            subtitle: "Modernize formats, sizing, loading, and alternative text.",
             icon: "photo.on.rectangle.angled",
+            accent: .cyan,
             prompt: """
             Audit and modernize image delivery.
             - Find oversized, poorly compressed, or incorrectly dimensioned assets
@@ -616,8 +605,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Privacy & Analytics",
-            subtitle: "Reduce tracking and make consent behavior honest",
+            subtitle: "Reduce tracking and make consent behavior transparent.",
             icon: "hand.raised",
+            accent: .amber,
             prompt: """
             Audit analytics, embeds, cookies, and client-side data collection.
             - Inventory what loads, what data it sends, and when it activates
@@ -630,8 +620,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Content Refresh",
-            subtitle: "Improve clarity, scannability, and trust",
+            subtitle: "Improve clarity, structure, scannability, and trust.",
             icon: "text.redaction",
+            accent: .neutral,
             prompt: """
             Refresh the site's core copy without changing its meaning or inventing facts.
             - Tighten headings and opening paragraphs
@@ -644,8 +635,9 @@ struct ChatView: View {
         ),
         AgentTemplate(
             title: "Offline Resilience",
-            subtitle: "Handle weak networks, failures, and recovery",
+            subtitle: "Handle weak connections, failed requests, and recovery.",
             icon: "wifi.exclamationmark",
+            accent: .teal,
             prompt: """
             Improve resilience under slow, intermittent, or offline network conditions.
             - Find requests that fail silently or leave the interface stuck
@@ -681,61 +673,58 @@ struct ChatView: View {
 
             HStack(alignment: .bottom, spacing: Theme.Space.m) {
                 HStack(alignment: .bottom, spacing: Theme.Space.s) {
-                    Button {
+                    ComposerAttachmentButton {
                         showAttachmentPicker = true
-                    } label: {
-                        Label("Attach files", systemImage: "paperclip")
                     }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
                     .disabled(engine.state.isActive || attachments.count >= Attachment.maximumCount)
-                    .help("Attach images or text files")
 
-                    TextField("Describe a change…", text: $draft, axis: .vertical)
+                    TextField("Describe a change, issue, or goal…", text: $draft, axis: .vertical)
                         .textFieldStyle(.plain)
-                        .font(.body)
+                        .font(Theme.ui(13.5))
+                        .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1...6)
                         .focused($composerFocused)
                         .onSubmit { sendIfPossible() }
+                        .padding(.vertical, 3)
+                        .onChange(of: draft) { _, newValue in
+                            if !newValue.isEmpty { composerFocusChrome = true }
+                        }
                 }
-                .padding(.horizontal, Theme.Space.m)
-                .padding(.vertical, 10)
-                .background(Theme.raisedFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Theme.Radius.medium)
-                        .strokeBorder(composerFocused ? Theme.focusRing : Theme.strongBorder,
-                                      lineWidth: composerFocused ? 2 : 1)
+                .padding(.horizontal, Theme.Space.m + 2)
+                .padding(.vertical, 9)
+                .frame(minHeight: 54)
+                .background(Theme.elevatedSurface,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous))
+                .activityBorder(active: engine.state.isActive, focused: composerShowsFocus)
+                .cardElevation(raised: composerShowsFocus)
+                .animation(Motion.smooth, value: composerShowsFocus)
+                .onTapGesture {
+                    composerFocusChrome = true
+                    composerFocused = true
                 }
 
                 if engine.state.isActive {
                     Button {
                         engine.cancelGeneration()
                     } label: {
-                        Label("Stop agent", systemImage: "stop.circle.fill")
-                            .font(.system(size: 30))
+                        Label("Stop agent", systemImage: "stop.fill")
+                            .font(.system(size: 12, weight: .bold))
                     }
                     .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.warning)
+                    .buttonStyle(ComposerActionStyle(kind: .stop))
                     .keyboardShortcut(".", modifiers: .command)
                     .help("Stop agent (⌘.)")
                 } else {
                     Button {
                         sendIfPossible()
                     } label: {
-                        Label("Send message", systemImage: "arrow.up.circle.fill")
-                            .font(.system(size: 30))
-                            .foregroundStyle(canSend
-                                ? AnyShapeStyle(Theme.brandGradient)
-                                : AnyShapeStyle(Theme.tertiaryText))
-                            .symbolEffect(.bounce, value: engine.transcript.count)
+                        Label("Send message", systemImage: "arrow.up")
+                            .font(.system(size: 14, weight: .semibold))
                     }
                     .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
+                    .buttonStyle(ComposerActionStyle(kind: canSend ? .send : .idle))
                     .disabled(!canSend)
-                    .animation(Motion.bouncy, value: canSend)
+                    .animation(Motion.smooth, value: canSend)
                     .keyboardShortcut(.return, modifiers: [])
                     .help("Send message")
                 }
@@ -766,17 +755,20 @@ struct ChatView: View {
     private func attachmentChip(_ attachment: Attachment) -> some View {
         HStack(spacing: 6) {
             Image(systemName: attachment.isImage ? "photo" : "doc.text")
-                .foregroundStyle(Theme.accent)
+                .foregroundStyle(Theme.secondaryText)
             VStack(alignment: .leading, spacing: 1) {
-                Text(attachment.filename).lineLimit(1)
+                Text(attachment.filename)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
                 Text(attachment.byteLabel)
                     .font(.caption2)
-                    .foregroundStyle(Theme.secondaryText)
+                    .foregroundStyle(Theme.tertiaryText)
             }
             Button {
                 attachments.removeAll { $0.id == attachment.id }
             } label: {
                 Label("Remove \(attachment.filename)", systemImage: "xmark")
+                    .foregroundStyle(Theme.secondaryText)
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.plain)
@@ -784,8 +776,9 @@ struct ChatView: View {
         .font(.callout)
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(Theme.raisedFill, in: RoundedRectangle(cornerRadius: Theme.Radius.small))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.small).strokeBorder(Theme.strongBorder))
+        .background(Theme.elevatedSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
+            .strokeBorder(Theme.borderSubtle))
         .frame(maxWidth: 260)
     }
 
@@ -819,6 +812,7 @@ struct ChatView: View {
                 ))
             }
             attachmentError = nil
+            composerFocusChrome = true
             composerFocused = true
         } catch {
             attachmentError = error.localizedDescription
@@ -833,6 +827,261 @@ struct ChatView: View {
         engine.lastError = nil
         draft = text
         sendIfPossible()
+    }
+}
+
+// MARK: - Composer controls
+
+/// The composer's attachment affordance: neutral at rest, violet while hovered
+/// or focused, with a visible focus ring of its own.
+private struct ComposerAttachmentButton: View {
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Label("Attach files", systemImage: "paperclip")
+                .labelStyle(.iconOnly)
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(AttachmentStyle(isHovering: isHovering && isEnabled))
+        .onHover { hovering in
+            withAnimation(Theme.Chrome.Timing.hover) { isHovering = hovering }
+        }
+        .help("Attach images or text files")
+    }
+
+    private struct AttachmentStyle: ButtonStyle {
+        let isHovering: Bool
+
+        func makeBody(configuration: Configuration) -> some View {
+            Surface(configuration: configuration, isHovering: isHovering)
+        }
+
+        private struct Surface: View {
+            let configuration: Configuration
+            let isHovering: Bool
+
+            @Environment(\.isEnabled) private var isEnabled
+            @Environment(\.isFocused) private var isFocused
+
+            private var shape: RoundedRectangle {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+            }
+
+            var body: some View {
+                configuration.label
+                    .foregroundStyle(active ? Theme.violet : Theme.tertiaryText)
+                    .background(shape.fill(active ? Theme.violetSoft : Color.clear))
+                    .overlay {
+                        shape.inset(by: -2)
+                            .strokeBorder(Theme.focusRing.opacity(isFocused ? 0.9 : 0), lineWidth: 2)
+                    }
+                    .contentShape(shape)
+                    .opacity(isEnabled ? 1 : 0.45)
+            }
+
+            private var active: Bool {
+                isEnabled && (isHovering || configuration.isPressed || isFocused)
+            }
+        }
+    }
+}
+
+/// The composer's trailing action. One footprint, three states: an inert
+/// neutral circle while there is nothing to send, a primary circle once there
+/// is, and a restrained amber Stop while the agent is running.
+private struct ComposerActionStyle: ButtonStyle {
+    enum Kind { case idle, send, stop }
+
+    let kind: Kind
+
+    func makeBody(configuration: Configuration) -> some View {
+        Surface(configuration: configuration, kind: kind)
+    }
+
+    private struct Surface: View {
+        let configuration: Configuration
+        let kind: Kind
+
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @State private var isHovering = false
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(foreground)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(fill))
+                .overlay {
+                    if kind == .stop {
+                        Circle().strokeBorder(Theme.warning.opacity(0.28), lineWidth: 1)
+                    }
+                }
+                .overlay {
+                    Circle()
+                        .inset(by: -3)
+                        .strokeBorder(Theme.focusRing.opacity(isFocused ? 0.9 : 0), lineWidth: 2)
+                }
+                .contentShape(Circle())
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+                .animation(Theme.Chrome.Timing.press, value: configuration.isPressed)
+                .animation(Theme.Chrome.Timing.hover, value: isHovering)
+                .onHover { isHovering = $0 }
+        }
+
+        private var foreground: Color {
+            switch kind {
+            case .idle: return Theme.disabledText
+            case .send: return Theme.textInverse
+            case .stop: return Theme.warning
+            }
+        }
+
+        private var fill: Color {
+            switch kind {
+            case .idle:
+                return Theme.secondarySurface
+            case .send:
+                if configuration.isPressed { return Theme.accentPressed }
+                return isHovering && isEnabled ? Theme.accentHover : Theme.accent
+            case .stop:
+                return Theme.warning.opacity(configuration.isPressed ? 0.24
+                                             : (isHovering ? 0.18 : 0.12))
+            }
+        }
+    }
+}
+
+// MARK: - Smart task card
+
+/// One suggestion in the Smart Tasks grid.
+///
+/// Every card is the same neutral elevated surface; the category's accent
+/// appears only in the icon tile (and, a shade stronger, while hovered). One
+/// component owns the card's default, hover, pressed, focused, and recommended
+/// states so the grid cannot drift into thirteen variants.
+struct SmartTaskCard: View {
+    let template: ChatView.AgentTemplate
+    let metrics: AgentWorkspaceMetrics
+    let recommended: Bool
+    let action: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .top, spacing: Theme.Space.s) {
+                    iconTile
+                    Spacer(minLength: 0)
+                    if recommended { RecommendedBadge() }
+                }
+                Text(LocalizedStringKey(template.title))
+                    .font(Theme.ui(13, .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(LocalizedStringKey(template.subtitle))
+                    .font(Theme.ui(12))
+                    .foregroundStyle(Theme.secondaryText)
+                    .lineSpacing(2)
+                    .lineLimit(metrics.isNarrow ? 2 : 3)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(Theme.Space.m)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(minHeight: metrics.taskCardMinHeight, alignment: .topLeading)
+        }
+        .buttonStyle(SmartTaskCardStyle(isHovering: isHovering))
+        .onHover { hovering in
+            withAnimation(reduceMotion ? nil : Theme.Chrome.Timing.elevation) {
+                isHovering = hovering
+            }
+        }
+        .accessibilityLabel("Starter task: \(template.title)")
+        .accessibilityHint("\(template.subtitle). Fills the message field for editing.")
+    }
+
+    private var iconTile: some View {
+        Image(systemName: template.icon)
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(template.accent.color)
+            .frame(width: 28, height: 28)
+            .background(
+                isHovering ? AnyShapeStyle(template.accent.color.opacity(0.16))
+                           : AnyShapeStyle(template.accent.soft),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+    }
+}
+
+/// The one Recommended treatment: a small amber chip, sized to sit beside a
+/// card title without competing with it.
+private struct RecommendedBadge: View {
+    var body: some View {
+        Text("Recommended")
+            .font(Theme.ui(10.5, .semibold))
+            .foregroundStyle(Theme.amberText)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(Theme.amberSoft, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.amberBorder, lineWidth: 1))
+    }
+}
+
+/// The card's surface: neutral fill, hairline, and two very soft shadows that
+/// only get clearer on hover. Motion is a 1.5pt lift, not a scale.
+private struct SmartTaskCardStyle: ButtonStyle {
+    let isHovering: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        Surface(configuration: configuration, isHovering: isHovering)
+    }
+
+    private struct Surface: View {
+        let configuration: Configuration
+        let isHovering: Bool
+
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.isFocused) private var isFocused
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        private var shape: RoundedRectangle {
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+        }
+
+        var body: some View {
+            configuration.label
+                .background(configuration.isPressed ? Theme.secondarySurface : Theme.elevatedSurface,
+                            in: shape)
+                .overlay {
+                    shape.strokeBorder(isHovering ? Theme.borderStandard : Theme.borderSubtle,
+                                       lineWidth: 1)
+                }
+                .cardElevation(raised: isHovering && !configuration.isPressed)
+                .overlay {
+                    shape.inset(by: -3)
+                        .strokeBorder(Theme.focusRing.opacity(isFocused ? 0.9 : 0), lineWidth: 2)
+                }
+                .offset(y: liftedOffset)
+                .contentShape(shape)
+                .opacity(isEnabled ? 1 : 0.5)
+                .animation(reduceMotion ? nil : Theme.Chrome.Timing.press,
+                           value: configuration.isPressed)
+        }
+
+        private var liftedOffset: CGFloat {
+            guard !reduceMotion else { return 0 }
+            if configuration.isPressed { return 0 }
+            return isHovering ? -1.5 : 0
+        }
     }
 }
 
@@ -883,9 +1132,10 @@ struct LiveToolActivity: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.violet)
                 Text("Agent activity")
                     .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
                 Spacer()
                 if events.contains(where: { $0.status == .running }) {
                     ProgressView().controlSize(.mini)
@@ -918,11 +1168,11 @@ struct LiveToolActivity: View {
             }
         }
         .padding(Theme.Space.m)
-        .background(Theme.panelFill,
+        .background(Theme.elevatedSurface,
                     in: RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
-                .strokeBorder(Theme.hairline)
+                .strokeBorder(Theme.borderSubtle)
         }
         .accessibilityElement(children: .contain)
     }
@@ -1025,7 +1275,7 @@ struct ReasoningDisclosure: View {
                 HStack(spacing: 6) {
                     Image(systemName: "brain")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(Theme.Chrome.accent)
+                        .foregroundStyle(Theme.violet)
                         .symbolEffect(.pulse, isActive: streaming && expanded && !reduceMotion)
                     Text(streaming
                          ? String(localized: "Thinking…")
@@ -1080,12 +1330,12 @@ struct ReasoningDisclosure: View {
         }
         .background(
             RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
-                .fill(Theme.raisedFill)
+                .fill(Theme.secondarySurface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
                 .strokeBorder(
-                    streaming ? Theme.Chrome.accent.opacity(0.28) : Theme.borderSubtle,
+                    streaming ? Theme.violet.opacity(0.28) : Theme.borderSubtle,
                     lineWidth: 1
                 )
         )
@@ -1186,7 +1436,7 @@ struct MessageBubble: View {
     }
 
     private var background: AnyShapeStyle {
-        isUser ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Theme.cardFill)
+        isUser ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.cardFill)
     }
 
     private var bubbleShape: RoundedRectangle {
@@ -1210,7 +1460,7 @@ struct MessageBubble: View {
                 .foregroundStyle(Theme.secondaryText)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
-                .background(Theme.raisedFill, in: Capsule())
+                .background(Theme.secondarySurface, in: Capsule())
             }
         }
     }
@@ -1240,7 +1490,7 @@ struct TypingIndicator: View {
             ProviderAvatar(size: 28, providerID: providerID, active: true, state: .thinking)
             HStack(spacing: 4) {
                 ForEach(0..<3) { i in
-                    Circle().fill(Color.secondary)
+                    Circle().fill(Theme.tertiaryText)
                         .frame(width: 6, height: 6)
                         .opacity(0.4 + 0.6 * abs(sin(phase + Double(i) * 0.6)))
                 }
@@ -1268,6 +1518,7 @@ struct PendingChangesBar: View {
                 .symbolEffect(.bounce, value: engine.pendingChanges.count)
             Text("\(engine.pendingChanges.count) change\(engine.pendingChanges.count == 1 ? "" : "s") ready to review")
                 .font(.callout.weight(.medium))
+                .foregroundStyle(Theme.textPrimary)
                 .contentTransition(.numericText())
             Spacer()
             ScrollView(.horizontal, showsIndicators: false) {
@@ -1278,8 +1529,10 @@ struct PendingChangesBar: View {
                                 Image(systemName: change.category.icon).font(.caption2)
                                 Text(change.path).font(.caption).lineLimit(1)
                             }
+                            .foregroundStyle(Theme.secondaryText)
                             .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(Theme.accent.opacity(0.12), in: Capsule())
+                            .background(Theme.elevatedSurface, in: Capsule())
+                            .overlay(Capsule().strokeBorder(Theme.borderSubtle))
                         }
                         .buttonStyle(.plain)
                         .wcAppear(delay: Double(idx) * 0.03)
@@ -1292,6 +1545,6 @@ struct PendingChangesBar: View {
         }
         .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.m)
-        .background(Theme.warning.opacity(0.08))
+        .background(Theme.amberSoft)
     }
 }
