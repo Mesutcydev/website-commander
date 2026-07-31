@@ -10,7 +10,7 @@ import AppKit
 enum SettingsMetrics {
     static let width: CGFloat = 620
     static let minPageHeight: CGFloat = 300
-    static let maxPageHeight: CGFloat = 560
+    static let maxPageHeight: CGFloat = 620
     static let tabItemWidth: CGFloat = 84
     static let pageInsets = EdgeInsets(top: Theme.Space.l, leading: Theme.Space.xl,
                                        bottom: Theme.Space.xl, trailing: Theme.Space.xl)
@@ -196,7 +196,6 @@ struct SettingsPage<Content: View>: View {
         .scrollBounceBehavior(.basedOnSize)
         .onPreferenceChange(SettingsPageHeightKey.self) { height in
             guard height > 0 else { return }
-            NSLog("WCDEBUG page height %f", height)
             naturalHeight = height
         }
         .frame(height: min(max(naturalHeight, SettingsMetrics.minPageHeight),
@@ -237,9 +236,6 @@ struct SettingsSection<Content: View>: View {
                     .padding(.horizontal, 2)
             }
         }
-        .background(GeometryReader { p in
-            Color.clear.onAppear { NSLog("WCDEBUG section %@ %f", title, p.size.height) }
-        })
     }
 }
 
@@ -283,16 +279,30 @@ struct SettingsToggleRow: View {
 
 /// A single line of state ("Signed in to iCloud", "Listening on 127.0.0.1…").
 /// The glyph carries the same tint as the text so the line reads as one object.
+/// `verbatim` is for runtime values and error messages, which must not be run
+/// through the string catalog.
 struct SettingsStatusLine: View {
-    let text: String
+    private let content: Text
     let systemImage: String
     var tint: Color = Theme.secondaryText
+
+    init(_ text: String, systemImage: String, tint: Color = Theme.secondaryText) {
+        self.content = Text(LocalizedStringKey(text))
+        self.systemImage = systemImage
+        self.tint = tint
+    }
+
+    init(verbatim text: String, systemImage: String, tint: Color = Theme.secondaryText) {
+        self.content = Text(verbatim: text)
+        self.systemImage = systemImage
+        self.tint = tint
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: systemImage)
                 .font(.system(size: 11, weight: .semibold))
-            Text(LocalizedStringKey(text))
+            content
                 .font(Theme.ui(11, .semibold))
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -300,17 +310,35 @@ struct SettingsStatusLine: View {
     }
 }
 
-/// Body copy inside a card — an explanation that belongs to the rows above it.
+/// Body copy inside a card — an explanation that belongs to the rows above it,
+/// optionally led by a glyph. `verbatim` is for values (paths, URLs) that must
+/// not be run through the string catalog or auto-linkified.
 struct SettingsNote: View {
-    let text: String
+    private let content: Text
+    var systemImage: String? = nil
+    var tint: Color = Theme.secondaryText
 
-    init(_ text: String) { self.text = text }
+    init(_ text: String, systemImage: String? = nil) {
+        self.content = Text(LocalizedStringKey(text))
+        self.systemImage = systemImage
+    }
+
+    init(verbatim text: String, tint: Color = Theme.tertiaryText) {
+        self.content = Text(verbatim: text)
+        self.tint = tint
+    }
 
     var body: some View {
-        Text(LocalizedStringKey(text))
-            .font(Theme.ui(11))
-            .foregroundStyle(Theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            content
+                .font(Theme.ui(11))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(tint)
     }
 }
 
@@ -410,7 +438,8 @@ struct GitHubSettingsTab: View {
         HStack(spacing: Theme.Space.m) {
             IconTile(systemImage: "person.crop.circle.fill", accent: .neutral, size: 32)
             VStack(alignment: .leading, spacing: 2) {
-                Text(LocalizedStringKey(row.title))
+                // A GitHub login is a value, not copy: never localised.
+                Text(verbatim: row.title)
                     .font(Theme.ui(13, .semibold))
                     .foregroundStyle(Theme.textPrimary)
                 Text(LocalizedStringKey(row.subtitle))
@@ -461,7 +490,7 @@ struct GitHubSettingsTab: View {
                 Spacer(minLength: 0)
             }
             if let status {
-                SettingsStatusLine(text: status,
+                SettingsStatusLine(verbatim: status,
                                    systemImage: statusOK ? "checkmark.circle.fill" : "xmark.circle.fill",
                                    tint: statusOK ? Theme.success : Theme.danger)
             }
@@ -580,7 +609,7 @@ struct ProviderSettingsTab: View {
 
             if settings.providerID == "ondevice" {
                 SettingsSection(title: "On-Device AI") {
-                    SettingsStatusLine(text: onDeviceStatus,
+                    SettingsStatusLine(onDeviceStatus,
                                        systemImage: onDeviceAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
                                        tint: onDeviceAvailable ? Theme.success : Theme.warning)
                     SettingsNote("Runs fully offline using Apple Intelligence. No API key required.")
@@ -599,7 +628,7 @@ struct ProviderSettingsTab: View {
                         Button("Save Key") {
                             settings.setAPIKey(key.trimmingCharacters(in: .whitespaces), for: settings.providerID)
                         }
-                        .buttonStyle(.primary)
+                        .buttonStyle(.primaryCompact)
                         if let url = info?.keySourceURL, !url.isEmpty {
                             Link(destination: URL(string: url)!) {
                                 HStack(spacing: 4) {
@@ -607,6 +636,7 @@ struct ProviderSettingsTab: View {
                                     Image(systemName: "arrow.up.right").font(.system(size: 9, weight: .bold))
                                 }
                                 .font(Theme.ui(12, .semibold))
+                                .foregroundStyle(Theme.accent)
                             }
                         }
                         Spacer(minLength: 0)
@@ -772,7 +802,7 @@ struct BehaviorSettingsTab: View {
                         if on { cloudSync.push(settings) }
                     }
                 SettingsStatusLine(
-                    text: CloudSyncService.isSignedIn
+                    CloudSyncService.isSignedIn
                         ? "Signed in to iCloud. Secrets (API keys, tokens) never sync."
                         : "Not signed in to iCloud — sync is inactive.",
                     systemImage: CloudSyncService.isSignedIn ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
@@ -808,7 +838,7 @@ struct BehaviorSettingsTab: View {
     @ViewBuilder private var bridgeState: some View {
         if bridge.isRunning, let port = bridge.port {
             VStack(alignment: .leading, spacing: Theme.Space.s) {
-                SettingsStatusLine(text: "Listening on 127.0.0.1:\(port) (loopback only)",
+                SettingsStatusLine(verbatim: "Listening on 127.0.0.1:\(port) (loopback only)",
                                    systemImage: "lock.shield.fill",
                                    tint: Theme.success)
                 HStack(spacing: Theme.Space.s) {
@@ -826,19 +856,18 @@ struct BehaviorSettingsTab: View {
                             NSPasteboard.general.setString(token, forType: .string)
                         }
                     }
-                    .buttonStyle(.primarySoft)
-                    .controlSize(.small)
+                    .buttonStyle(.primarySoftCompact)
                 }
                 SettingsNote("Any program on this Mac that reads the token file can drive the app. Keep it off when not in use.")
             }
         } else if settings.localBridgeEnabled {
             if let error = bridge.lastError {
-                SettingsStatusLine(text: error, systemImage: "xmark.octagon.fill", tint: Theme.danger)
+                SettingsStatusLine(verbatim: error, systemImage: "xmark.octagon.fill", tint: Theme.danger)
             } else {
-                SettingsStatusLine(text: "Starting…", systemImage: "hourglass")
+                SettingsStatusLine("Starting…", systemImage: "hourglass")
             }
         } else {
-            SettingsStatusLine(text: "Off — no socket is open.", systemImage: "power")
+            SettingsStatusLine("Off — no socket is open.", systemImage: "power")
         }
     }
 
@@ -894,9 +923,7 @@ struct AboutSettingsTab: View {
             }
             .frame(maxWidth: .infinity)
 
-            SettingsSection(title: "Updates",
-                            footnote: settings.updateFeedURL.trimmingCharacters(in: .whitespaces).isEmpty
-                                ? "Using \(UpdateChecker.defaultFeedURL)" : nil) {
+            SettingsSection(title: "Updates") {
                 FormRow(label: "Update feed URL",
                         help: HelpButton(title: "Update feed",
                                          message: "Leave this blank to use the built-in feed at mesut.uk. Override only if you host your own JSON: {\"version\":\"1.1.0\",\"url\":\"…zip\",\"sha256\":\"…\",\"notes\":\"…\"}. The app checks once shortly after launch and whenever you choose Check for Updates — it never polls in the background. Install verifies the ZIP checksum, replaces this app, and relaunches.",
@@ -908,10 +935,12 @@ struct AboutSettingsTab: View {
                         Button(updater.checking ? "…" : "Check") {
                             Task { await updater.check(feedURL: settings.updateFeedURL, userInitiated: true) }
                         }
-                        .buttonStyle(.primarySoft)
-                        .controlSize(.small)
+                        .buttonStyle(.primarySoftCompact)
                         .disabled(updater.checking || updater.installing)
                     }
+                }
+                if settings.updateFeedURL.trimmingCharacters(in: .whitespaces).isEmpty {
+                    SettingsNote(verbatim: "Using \(UpdateChecker.defaultFeedURL)")
                 }
                 updateState
             }
@@ -920,33 +949,31 @@ struct AboutSettingsTab: View {
 
     @ViewBuilder private var updateState: some View {
         if let error = updater.lastError {
-            SettingsStatusLine(text: error, systemImage: "xmark.circle.fill", tint: Theme.danger)
+            SettingsStatusLine(verbatim: error, systemImage: "xmark.circle.fill", tint: Theme.danger)
         } else if updater.upToDate {
-            SettingsStatusLine(text: "You're on the latest version.",
+            SettingsStatusLine("You're on the latest version.",
                                systemImage: "checkmark.circle.fill",
                                tint: Theme.success)
         } else if let release = updater.available {
             SettingsRowDivider()
             VStack(alignment: .leading, spacing: Theme.Space.s) {
-                SettingsStatusLine(text: "Update \(release.version) is available.",
+                SettingsStatusLine(verbatim: "Update \(release.version) is available.",
                                    systemImage: "arrow.down.circle.fill",
                                    tint: Theme.accent)
                 if !release.notes.isEmpty {
-                    SettingsNote(release.notes)
+                    SettingsNote(verbatim: release.notes, tint: Theme.secondaryText)
                 }
                 HStack(spacing: Theme.Space.s) {
                     if release.sha256.count == 64 && release.url.lowercased().hasSuffix(".zip") {
                         Button(updater.installing ? "Installing…" : "Install & Relaunch") {
                             Task { await updater.installAndRelaunch(release) }
                         }
-                        .buttonStyle(.primary)
-                        .controlSize(.small)
+                        .buttonStyle(.primaryCompact)
                         .disabled(updater.installing)
                     }
                     if let url = URL(string: release.url), !release.url.isEmpty {
                         Button("Download") { NSWorkspace.shared.open(url) }
-                            .buttonStyle(.primarySoft)
-                            .controlSize(.small)
+                            .buttonStyle(.primarySoftCompact)
                     }
                     Spacer(minLength: 0)
                 }

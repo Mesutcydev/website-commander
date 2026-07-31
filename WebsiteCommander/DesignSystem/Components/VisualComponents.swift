@@ -185,14 +185,17 @@ extension SectionHeader where Accessory == EmptyView {
 /// with it.
 struct PrimaryButtonStyle: ButtonStyle {
     var prominent: Bool = true
+    /// The inline size: matches a 28pt field, for a button that sits beside one.
+    var compact: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Surface(configuration: configuration, prominent: prominent)
+        Surface(configuration: configuration, prominent: prominent, compact: compact)
     }
 
     private struct Surface: View {
         let configuration: Configuration
         let prominent: Bool
+        let compact: Bool
 
         @Environment(\.isEnabled) private var isEnabled
         @Environment(\.isFocused) private var isFocused
@@ -203,10 +206,10 @@ struct PrimaryButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(Theme.ui(13, .semibold))
+                .font(Theme.ui(compact ? 12 : 13, .semibold))
                 .foregroundStyle(label)
-                .padding(.horizontal, Theme.Space.l)
-                .padding(.vertical, Theme.Space.s + 2)
+                .padding(.horizontal, compact ? Theme.Space.m : Theme.Space.l)
+                .padding(.vertical, compact ? 5 : Theme.Space.s + 2)
                 .background(fill, in: shape)
                 .overlay {
                     shape.strokeBorder(border, lineWidth: 1)
@@ -327,12 +330,16 @@ struct DestructiveTextButtonStyle: ButtonStyle {
 extension ButtonStyle where Self == PrimaryButtonStyle {
     static var primary: PrimaryButtonStyle { PrimaryButtonStyle() }
     static var primarySoft: PrimaryButtonStyle { PrimaryButtonStyle(prominent: false) }
+    static var primaryCompact: PrimaryButtonStyle { PrimaryButtonStyle(compact: true) }
+    static var primarySoftCompact: PrimaryButtonStyle {
+        PrimaryButtonStyle(prominent: false, compact: true)
+    }
 }
 
 extension ButtonStyle where Self == IconButtonStyle {
     static var icon: IconButtonStyle { IconButtonStyle() }
     /// The inline size, for a control that sits next to 11pt metadata.
-    static var iconCompact: IconButtonStyle { IconButtonStyle(size: 22, glyphSize: 12) }
+    static var iconCompact: IconButtonStyle { IconButtonStyle(size: 20, glyphSize: 11) }
 }
 
 extension ButtonStyle where Self == DestructiveTextButtonStyle {

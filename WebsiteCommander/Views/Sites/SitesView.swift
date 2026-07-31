@@ -201,10 +201,7 @@ struct WorkspaceCard: View {
 
                     if previewState == .loading {
                         ZStack {
-                            // The same inset surface the failed state uses, so
-                            // the placeholder sits on the theme's ladder rather
-                            // than on AppKit's window grey.
-                            Theme.secondarySurface
+                            Color(nsColor: .windowBackgroundColor)
                             ProgressView()
                                 .controlSize(.small)
                         }

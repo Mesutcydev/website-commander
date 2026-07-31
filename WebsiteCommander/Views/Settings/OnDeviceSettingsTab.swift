@@ -59,10 +59,10 @@ struct OnDeviceSettingsTab: View {
             }
 
             SettingsSection(title: "Good to know") {
-                SettingsStatusLine(text: "On-device models are text-only. The agent's live-page screenshot falls back to a text snapshot when running on-device.",
-                                   systemImage: "eye.slash")
-                SettingsStatusLine(text: "There is no model to download or pick: Foundation Models is a single system model managed by macOS.",
-                                   systemImage: "info.circle")
+                SettingsNote("On-device models are text-only. The agent's live-page screenshot falls back to a text snapshot when running on-device.",
+                             systemImage: "eye.slash")
+                SettingsNote("There is no model to download or pick: Foundation Models is a single system model managed by macOS.",
+                             systemImage: "info.circle")
             }
         }
     }

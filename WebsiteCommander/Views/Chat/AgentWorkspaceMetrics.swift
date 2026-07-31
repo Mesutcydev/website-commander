@@ -76,10 +76,10 @@ struct AgentWorkspaceMetrics: Equatable {
 
     // MARK: Command Center rows
 
-    /// The dashboard's card rows use the same idea as `taskColumns`: a chosen
-    /// count per width with flexible cards, so every row ends on the gutter
-    /// instead of leaving the ragged trailing space an adaptive grid produces.
-    /// Counts step down before a card would fall under a comfortable size.
+    // The dashboard's card rows use the same idea as `taskColumns`: a chosen
+    // count per width with flexible cards, so every row ends on the gutter
+    // instead of leaving the ragged trailing space an adaptive grid produces.
+    // Counts step down before a card would fall under a comfortable size.
 
     /// Four status tiles: one row while a tile stays around 190pt, otherwise a
     /// 2×2 block. Three columns would strand a single tile on its own row.
