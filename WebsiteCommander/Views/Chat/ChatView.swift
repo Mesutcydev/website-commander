@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 /// The agent workspace pane. It has two modes, both laid out on the shared
 /// `AgentWorkspaceMetrics` grid so the transcript and the docked composer align
@@ -99,6 +100,16 @@ struct ChatView: View {
                   let first = engine.pendingChanges.first else { return }
             DispatchQueue.main.async { reviewingChange = first }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .requestAgentSend)) { _ in
+            sendIfPossible()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .requestAgentStop)) { _ in
+            engine.cancelGeneration()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .requestApproveAll)) { _ in
+            guard !engine.pendingChanges.isEmpty else { return }
+            Task { await engine.approveAll() }
+        }
     }
 
     /// The workspace shell: a primary column that owns vertical scrolling and
@@ -151,8 +162,11 @@ struct ChatView: View {
                 PendingChangesBar(reviewingChange: $reviewingChange)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            if let error = engine.lastError {
-                errorBar(error)
+            if engine.canContinue || engine.lastError != nil {
+                recoveryBar
+            }
+            if let note = engine.lastCommitNote {
+                commitBanner(note)
             }
             Rectangle()
                 .fill(Theme.divider)
@@ -161,28 +175,62 @@ struct ChatView: View {
         }
     }
 
-    private func errorBar(_ error: String) -> some View {
+    private var recoveryBar: some View {
         HStack(spacing: Theme.Space.s) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.danger)
-            Text(error)
+            Image(systemName: engine.canContinue ? "pause.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(engine.canContinue ? Theme.warning : Theme.danger)
+            Text(engine.canContinue
+                 ? (engine.lastStopReason ?? "Work paused")
+                 : (engine.lastError ?? "The last request failed."))
                 .font(.caption)
                 .foregroundStyle(Theme.secondaryText)
                 .lineLimit(2)
             Spacer()
-            Button("Retry") { retryLastPrompt() }
-                .buttonStyle(.bordered)
+            if engine.canContinue {
+                Button("Continue") { engine.continueRun() }
+                    .buttonStyle(.primarySoftCompact)
+            } else {
+                Button("Retry") { retryLastPrompt() }
+                    .buttonStyle(.primarySoftCompact)
+            }
             Button {
-                engine.lastError = nil
+                engine.dismissRecovery()
             } label: {
-                Label("Dismiss error", systemImage: "xmark")
+                Label("Dismiss recovery message", systemImage: "xmark")
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.plain)
         }
         .padding(.horizontal, Theme.Space.m)
         .padding(.vertical, Theme.Space.s)
-        .background(Theme.destructiveSoft)
+        .background(engine.canContinue ? Theme.amberSoft : Theme.destructiveSoft)
+    }
+
+    private func commitBanner(_ note: String) -> some View {
+        HStack(spacing: Theme.Space.s) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Theme.success)
+            Text(note)
+                .font(Theme.ui(12))
+                .foregroundStyle(Theme.secondaryText)
+                .lineLimit(2)
+            Spacer()
+            if let workspace = settings.activeWorkspace,
+               let url = SiteWorkspace.normalizedLiveURL(workspace.configuredLiveURL) {
+                Button("Open Live") { NSWorkspace.shared.open(url) }
+                    .buttonStyle(.primarySoftCompact)
+            }
+            Button {
+                engine.lastCommitNote = nil
+            } label: {
+                Label("Dismiss deployment status", systemImage: "xmark")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, Theme.Space.m)
+        .padding(.vertical, Theme.Space.s)
+        .background(Theme.greenSoft)
     }
 
     // MARK: Transcript
@@ -339,7 +387,7 @@ struct ChatView: View {
                     .tracking(Theme.Typography.titleTracking)
                     .foregroundStyle(Theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Describe the outcome in plain language. The agent will inspect your repository, propose a plan, and wait for your approval before editing.")
+                Text("Describe the outcome in plain language. The agent will inspect your repository, stage focused edits, and show Approve / Decline controls.")
                     .font(Theme.ui(13.5))
                     .foregroundStyle(Theme.secondaryText)
                     .lineSpacing(3)
@@ -378,7 +426,7 @@ struct ChatView: View {
                     .font(Theme.ui(12, .semibold))
                     .foregroundStyle(Theme.secondaryText)
                 Spacer(minLength: Theme.Space.s)
-                Text("Click to prefill the message")
+                Text("Click to start")
                     .font(Theme.ui(11))
                     .foregroundStyle(Theme.tertiaryText)
             }
@@ -397,9 +445,7 @@ struct ChatView: View {
                         metrics: metrics,
                         recommended: isRecommended(template)
                     ) {
-                        draft = contextualPrompt(for: template)
-                        composerFocusChrome = true
-                        composerFocused = true
+                        engine.send(contextualPrompt(for: template))
                     }
                 }
             }
@@ -703,7 +749,7 @@ struct ChatView: View {
                     composerFocused = true
                 }
 
-                if engine.state.isActive {
+                if engine.isRunActive {
                     Button {
                         engine.cancelGeneration()
                     } label: {
@@ -712,7 +758,6 @@ struct ChatView: View {
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(ComposerActionStyle(kind: .stop))
-                    .keyboardShortcut(".", modifiers: .command)
                     .help("Stop agent (⌘.)")
                 } else {
                     Button {
@@ -725,10 +770,10 @@ struct ChatView: View {
                     .buttonStyle(ComposerActionStyle(kind: canSend ? .send : .idle))
                     .disabled(!canSend)
                     .animation(Motion.smooth, value: canSend)
-                    .keyboardShortcut(.return, modifiers: [])
-                    .help("Send message")
+                    .help("Send message (⌘↩)")
                 }
             }
+            composerFooter
         }
         .padding(.horizontal, metrics.paddingX)
         .padding(.vertical, 14)
@@ -737,7 +782,29 @@ struct ChatView: View {
 
     private var canSend: Bool {
         (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
-            && !engine.state.isActive
+            && !engine.isRunActive
+    }
+
+    private var composerFooter: some View {
+        HStack(spacing: 5) {
+            if let workspace = settings.activeWorkspace {
+                Text(workspace.name)
+                Text("·")
+                Text(workspace.gitBranch)
+            }
+            if engine.sessionCostUSD > 0 {
+                Text("·")
+                Text("\(AgentCostFormatter.string(engine.sessionCostUSD)) session")
+                if engine.lastTurnCostUSD > 0 {
+                    Text("·")
+                    Text("\(AgentCostFormatter.string(engine.lastTurnCostUSD)) turn")
+                }
+            }
+            Spacer()
+        }
+        .font(Theme.ui(10.5))
+        .foregroundStyle(Theme.tertiaryText)
+        .accessibilityElement(children: .combine)
     }
 
     private func sendIfPossible() {
@@ -1255,6 +1322,7 @@ struct ReasoningDisclosure: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
     @State private var userCollapsed = false
+    @State private var userPinned = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1268,8 +1336,10 @@ struct ReasoningDisclosure: View {
                     }
                 } else if reduceMotion {
                     expanded.toggle()
+                    userPinned = expanded
                 } else {
                     withAnimation(Motion.snappy) { expanded.toggle() }
+                    userPinned = expanded
                 }
             } label: {
                 HStack(spacing: 6) {
@@ -1357,7 +1427,10 @@ struct ReasoningDisclosure: View {
             else { withAnimation(Motion.snappy) { expanded = shouldExpand } }
         } else {
             userCollapsed = false
-            // Completed turns stay collapsed so the reply stays primary.
+            if !userPinned {
+                if reduceMotion { expanded = false }
+                else { withAnimation(Motion.snappy) { expanded = false } }
+            }
         }
     }
 }
@@ -1517,9 +1590,10 @@ struct PendingChangesBar: View {
                 .foregroundStyle(Theme.warning)
                 .symbolEffect(.bounce, value: engine.pendingChanges.count)
             Text("\(engine.pendingChanges.count) change\(engine.pendingChanges.count == 1 ? "" : "s") ready to review")
-                .font(.callout.weight(.medium))
+                .font(Theme.ui(13, .medium))
                 .foregroundStyle(Theme.textPrimary)
                 .contentTransition(.numericText())
+            changeSummary
             Spacer()
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -1540,11 +1614,32 @@ struct PendingChangesBar: View {
                 }
             }
             .frame(maxWidth: 360)
+            Button("Decline All") { engine.discardAll() }
+                .buttonStyle(.destructiveText)
             Button("Approve All") { Task { await engine.approveAll() } }
                 .buttonStyle(.primary)
         }
         .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.m)
         .background(Theme.amberSoft)
+    }
+
+    private var changeSummary: some View {
+        let added = engine.pendingChanges.reduce(0) { $0 + $1.addedLines }
+        let removed = engine.pendingChanges.reduce(0) { $0 + $1.removedLines }
+        let risks = engine.pendingChanges.reduce(0) { $0 + $1.risks.count }
+        return HStack(spacing: 4) {
+            Text("+\(added)").foregroundStyle(Theme.success)
+            Text("−\(removed)").foregroundStyle(Theme.danger)
+            if risks > 0 {
+                Label("\(risks)", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.warning)
+            }
+        }
+        .font(Theme.ui(10.5, .semibold))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Theme.elevatedSurface.opacity(0.75), in: Capsule())
+        .accessibilityLabel("\(added) lines added, \(removed) removed, \(risks) risk findings")
     }
 }

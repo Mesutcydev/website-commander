@@ -121,7 +121,9 @@ struct OpenAICompatibleProvider: LLMProvider {
                                    completionTokens: (u["completion_tokens"] as? Int) ?? 0)
             }
             guard let choices = obj["choices"] as? [[String: Any]],
-                  let delta = choices.first?["delta"] as? [String: Any] else { continue }
+                  let choice = choices.first,
+                  let delta = (choice["delta"] as? [String: Any])
+                    ?? (choice["message"] as? [String: Any]) else { continue }
             if let chunk = Self.reasoningChunk(from: delta), !chunk.isEmpty {
                 if reasoning.isEmpty { onActivity(.reasoning) }
                 reasoning += chunk
@@ -138,16 +140,34 @@ struct OpenAICompatibleProvider: LLMProvider {
                     var entry = toolAcc[idx] ?? (id: "", name: "", args: "")
                     if let id = tc["id"] as? String, !id.isEmpty { entry.id = id }
                     if let fn = tc["function"] as? [String: Any] {
-                        if let n = fn["name"] as? String { entry.name += n }
-                        if let a = fn["arguments"] as? String { entry.args += a }
+                        if let n = fn["name"] as? String, !n.isEmpty {
+                            if entry.name.isEmpty { entry.name = n }
+                            else if n != entry.name {
+                                entry.name = n.hasPrefix(entry.name) ? n : entry.name + n
+                            }
+                        }
+                        if let a = fn["arguments"] as? String {
+                            entry.args += a
+                        } else if let a = fn["arguments"],
+                                  let data = try? JSONSerialization.data(withJSONObject: a),
+                                  let json = String(data: data, encoding: .utf8) {
+                            entry.args = json
+                        }
                     }
                     toolAcc[idx] = entry
                 }
+            } else if let fn = delta["function_call"] as? [String: Any] {
+                onActivity(.toolCall)
+                var entry = toolAcc[0] ?? (id: UUID().uuidString, name: "", args: "")
+                if let name = fn["name"] as? String, !name.isEmpty { entry.name = name }
+                if let args = fn["arguments"] as? String { entry.args += args }
+                toolAcc[0] = entry
             }
         }
 
-        let toolCalls = toolAcc.keys.sorted().map { i -> LLMToolCall in
+        let toolCalls = toolAcc.keys.sorted().compactMap { i -> LLMToolCall? in
             let e = toolAcc[i]!
+            guard !e.name.isEmpty else { return nil }
             return LLMToolCall(id: e.id.isEmpty ? UUID().uuidString : e.id,
                                name: e.name,
                                argumentsJSON: e.args.isEmpty ? "{}" : e.args)
@@ -236,10 +256,20 @@ struct OpenAICompatibleProvider: LLMProvider {
         if let rawCalls = message["tool_calls"] as? [[String: Any]] {
             for raw in rawCalls {
                 let fn = raw["function"] as? [String: Any]
+                let arguments: String
+                if let value = fn?["arguments"] as? String {
+                    arguments = value
+                } else if let value = fn?["arguments"],
+                          let data = try? JSONSerialization.data(withJSONObject: value),
+                          let json = String(data: data, encoding: .utf8) {
+                    arguments = json
+                } else {
+                    arguments = "{}"
+                }
                 toolCalls.append(LLMToolCall(
                     id: (raw["id"] as? String) ?? UUID().uuidString,
                     name: (fn?["name"] as? String) ?? "",
-                    argumentsJSON: (fn?["arguments"] as? String) ?? "{}"
+                    argumentsJSON: arguments
                 ))
             }
         }

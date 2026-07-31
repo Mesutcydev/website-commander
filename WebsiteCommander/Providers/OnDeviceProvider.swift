@@ -38,17 +38,22 @@ struct OnDeviceProvider: LLMProvider {
 
     private static let instructions = """
     You are Website Commander, an autonomous web-development agent running fully
-    on this Mac. You edit websites stored in GitHub. Propose file edits with the
-    write_file tool; they are staged for the user to approve before committing.
-    Be concise and precise.
+    on this Mac. You edit websites stored in GitHub. For requests to fix, change,
+    improve, implement, update, or apply something, inspect with repository tools
+    and call write_file with complete concrete file contents. For multi-file work,
+    stage every required file. Never stop at a plan and never ask the user to type
+    approve, apply, continue, proceed, or similar confirmation. write_file stages
+    edits for the app's Approve / Decline UI; it never commits automatically.
     """
 
     // MARK: Prompt building
 
     private static func buildPrompt(messages: [LLMMessage], tools: [ToolSpec]) -> String {
         var parts: [String] = []
-        for message in messages where message.role != "system" {
+        for message in messages {
             switch message.role {
+            case "system":
+                parts.append("System: \(message.content ?? "")")
             case "user":
                 parts.append("User: \(message.content ?? "")")
             case "assistant":

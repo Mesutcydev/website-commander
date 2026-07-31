@@ -160,9 +160,16 @@ struct AgentExecutionRail: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 4)
+                HStack(spacing: 3) {
+                    Text("+\(change.addedLines)")
+                        .foregroundStyle(Theme.success)
+                    Text("−\(change.removedLines)")
+                        .foregroundStyle(Theme.danger)
+                }
+                .font(Theme.ui(9.5, .semibold))
                 if !change.risks.isEmpty {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
+                    Label("\(change.risks.count)", systemImage: "exclamationmark.triangle.fill")
+                        .font(Theme.ui(9, .semibold))
                         .foregroundStyle(Theme.warning)
                 }
             }

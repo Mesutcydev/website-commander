@@ -191,10 +191,11 @@ struct DiffApprovalView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Discard") {
+            Button("Decline", role: .destructive) {
                 engine.discard(change)
                 dismiss()
             }
+            .buttonStyle(.destructiveText)
             Button {
                 isCommitting = true
                 Task {
@@ -204,7 +205,7 @@ struct DiffApprovalView: View {
                 }
             } label: {
                 if isCommitting { ProgressView().controlSize(.small) }
-                else { Label("Approve & Commit", systemImage: "checkmark.circle.fill") }
+                else { Label("Approve", systemImage: "checkmark.circle.fill") }
             }
             .buttonStyle(.primary)
             .disabled(isCommitting)

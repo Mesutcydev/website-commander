@@ -6,7 +6,7 @@ import AppKit
 
 /// High-level agent lifecycle state, surfaced in the chat toolbar.
 enum AgentState: String {
-    case idle, thinking, streaming, runningTool, awaitingApproval, committing, done, failed
+    case idle, thinking, streaming, runningTool, awaitingApproval, committing, paused, done, failed
 
     var label: String {
         switch self {
@@ -16,6 +16,7 @@ enum AgentState: String {
         case .runningTool:      return String(localized: "Working…")
         case .awaitingApproval: return String(localized: "Awaiting approval")
         case .committing:       return String(localized: "Committing…")
+        case .paused:           return String(localized: "Paused")
         case .done:             return String(localized: "Done")
         case .failed:           return String(localized: "Failed")
         }
@@ -33,12 +34,32 @@ enum AgentState: String {
 /// eight model rounds regardless of progress, which was too small for normal
 /// inspect → edit → verify work and produced a misleading staged-changes result.
 struct AgentRunBudget {
-    static let maximumRounds = 24
-    static let maximumOperations = 80
+    static let maximumRounds = 32
+    static let maximumOperations = 120
     static let maximumIdenticalCalls = 4
 
     static func callSignature(_ call: LLMToolCall) -> String {
         "\(call.name):\(call.argumentsJSON)"
+    }
+}
+
+enum ProviderRetryPolicy {
+    static func isTransient(_ error: Error) -> Bool {
+        if case LLMError.http(let status, _) = error {
+            return status == 408 || status == 429 || (500...599).contains(status)
+        }
+        let urlError = error as? URLError
+        return [
+            .timedOut, .networkConnectionLost, .notConnectedToInternet,
+            .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed
+        ].contains(urlError?.code)
+    }
+}
+
+enum AgentCostFormatter {
+    static func string(_ amount: Double) -> String {
+        if amount < 0.01 { return String(format: "$%.4f", amount) }
+        return String(format: "$%.2f", amount)
     }
 }
 
@@ -67,7 +88,11 @@ final class AgentEngine: ObservableObject {
     @Published var state: AgentState = .idle
     @Published var lastError: String?
     @Published var sessionCostUSD: Double = 0
+    @Published private(set) var lastTurnCostUSD: Double = 0
     @Published var lastCommitNote: String?
+    @Published private(set) var isRunActive = false
+    @Published private(set) var canContinue = false
+    @Published private(set) var lastStopReason: String?
     /// Set by dashboard recommendation cards; the Chat view consumes and clears it.
     @Published var prefilledPrompt: String?
     /// Live, cumulative assistant text while a streaming response is in flight.
@@ -81,6 +106,8 @@ final class AgentEngine: ObservableObject {
     private var streamLastPublish: Date = .distantPast
     private var reasoningLastPublish: Date = .distantPast
     private var activeTask: Task<Void, Never>?
+    private var activeRunID: UUID?
+    private var currentRunExpectsEdits = false
 
     /// Throttled (~30 Hz) update of the live bubble, hop-safe from any actor.
     func appendStreamText(_ cumulative: String) {
@@ -179,6 +206,8 @@ final class AgentEngine: ObservableObject {
         // Never drop work in progress: the outgoing chat lands on disk before
         // the transcript is cleared.
         finalizeInterruptedRun(notice: nil)
+        isRunActive = false
+        activeRunID = nil
         withAutosaveSuspended {
             transcript = []
             currentConversationID = nil
@@ -189,6 +218,9 @@ final class AgentEngine: ObservableObject {
         state = .idle
         lastError = nil
         lastCommitNote = nil
+        canContinue = false
+        lastStopReason = nil
+        lastTurnCostUSD = 0
         clearLiveStreams()
         rebuildSystemPrompt()
     }
@@ -199,6 +231,8 @@ final class AgentEngine: ObservableObject {
         activeTask = nil
         // Persist whatever was on screen before it is replaced.
         finalizeInterruptedRun(notice: nil)
+        isRunActive = false
+        activeRunID = nil
         withAutosaveSuspended {
             transcript = conv.messages
             currentConversationID = conv.id
@@ -207,6 +241,8 @@ final class AgentEngine: ObservableObject {
         pendingChanges = []
         state = .idle
         lastError = nil
+        canContinue = false
+        lastStopReason = nil
         clearLiveStreams()
         rebuildSystemPrompt()
         for message in conv.messages {
@@ -335,7 +371,7 @@ final class AgentEngine: ObservableObject {
     /// run keeps its partial reply instead of vanishing on cancel/crash-adjacent
     /// teardown. Pass `notice` when the interruption should be visible.
     private func finalizeInterruptedRun(notice: String?) {
-        guard state.isActive else {
+        guard isRunActive || state.isActive else {
             _ = flushConversation()
             return
         }
@@ -364,7 +400,7 @@ final class AgentEngine: ObservableObject {
         }
         liveToolEvents = []
         clearLiveStreams()
-        state = pendingChanges.isEmpty ? .done : .awaitingApproval
+        state = pendingChanges.isEmpty ? (canContinue ? .paused : .done) : .awaitingApproval
         flushConversation()
     }
 
@@ -376,10 +412,20 @@ final class AgentEngine: ObservableObject {
         var parts: [String] = []
         parts.append("""
         You are Website Commander, an autonomous web-development agent. You manage a
-        website stored in a GitHub repository. You read files, reason about changes,
-        and propose edits with the `write_file` tool. Every edit you propose is staged
-        and shown to the user as a diff; NOTHING is committed until the user approves.
-        Prefer small, focused changes. Read a file before editing it. Keep replies brief.
+        website stored in a GitHub repository. When the user asks to fix, change,
+        improve, implement, update, or apply something, you MUST inspect the repository
+        with `search_files`, `list_files`, and `read_file` as needed, then call
+        `write_file` with concrete complete file contents. Do not stop at an audit,
+        proposal, plan, or list of edits. For a multi-file fix, call `write_file` once
+        for every file that needs changing before you finish.
+
+        Every `write_file` edit is staged and shown by the app as a diff; NOTHING is
+        committed until the user chooses Approve in the app. The app owns confirmation:
+        NEVER ask the user to type "approve", "apply", "continue", "proceed", "say the
+        word", or any similar confirmation. NEVER tell the user to apply edits manually.
+        Stage the concrete edits, briefly report what was staged, then stop so the app
+        can present its Approve / Decline controls. Prefer small, focused changes and
+        read each existing file before editing it.
 
         You can also SEE and CONTROL the live rendered site in the app's preview
         browser: `browser_look` (page text, console, network, performance),
@@ -516,16 +562,65 @@ final class AgentEngine: ObservableObject {
             }
         }
         context.append(.user(contextualText, images: images))
-
-        activeTask?.cancel()
-        activeTask = Task { await runLoop(provider: provider) }
+        currentRunExpectsEdits = Self.requestExpectsEdits(trimmed)
+        startRun(provider: provider)
     }
 
     func cancelGeneration() {
-        guard state.isActive else { return }
+        guard isRunActive || state.isActive else { return }
         activeTask?.cancel()
         activeTask = nil
+        activeRunID = nil
+        canContinue = true
+        lastStopReason = "Stopped by user"
         finalizeInterruptedRun(notice: "Stopped.")
+        isRunActive = false
+    }
+
+    func continueRun() {
+        guard canContinue, let provider = currentProvider(),
+              settings.activeWorkspace != nil, gitHub != nil else { return }
+        continueRun(using: provider)
+    }
+
+    func continueRun(using provider: LLMProvider) {
+        guard canContinue, settings.activeWorkspace != nil, !isRunActive else { return }
+        lastError = nil
+        canContinue = false
+        lastStopReason = nil
+        startRun(provider: provider)
+    }
+
+    func dismissRecovery() {
+        lastError = nil
+        canContinue = false
+        lastStopReason = nil
+    }
+
+    private func startRun(provider: LLMProvider) {
+        activeTask?.cancel()
+        let runID = UUID()
+        activeRunID = runID
+        isRunActive = true
+        canContinue = false
+        lastStopReason = nil
+        lastTurnCostUSD = 0
+        activeTask = Task { @MainActor in
+            await runLoop(provider: provider)
+            guard self.activeRunID == runID else { return }
+            self.activeTask = nil
+            self.activeRunID = nil
+            self.isRunActive = false
+        }
+    }
+
+    static func requestExpectsEdits(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let editWords = [
+            "fix", "change", "improve", "implement", "update", "apply", "edit",
+            "add ", "remove ", "refactor", "optimize", "make ", "build "
+        ]
+        return editWords.contains { lower.contains($0) }
     }
 
     private func currentProvider() -> LLMProvider? {
@@ -564,6 +659,8 @@ final class AgentEngine: ObservableObject {
         lastError = nil
         transcript.append(ChatMessage(role: .user, text: trimmed))
         context.append(.user(trimmed))
+        currentRunExpectsEdits = Self.requestExpectsEdits(trimmed)
+        lastTurnCostUSD = 0
         await runLoop(provider: provider)
 
         var committed = 0
@@ -588,38 +685,53 @@ final class AgentEngine: ObservableObject {
         var operationCount = 0
         var callCounts: [String: Int] = [:]
         var stopReason: String?
+        var didNudgeForWrite = false
+        var stagedWriteCount = 0
+        var transientRetryAvailable = true
 
         for _ in 0..<AgentRunBudget.maximumRounds {
             guard !Task.isCancelled else { return }
             state = .thinking
             beginStream()
             let response: LLMResponse
-            do {
-                response = try await provider.stream(
-                    messages: context, tools: toolSpecs(), model: model,
-                    onActivity: { [weak self] activity in
-                        Task { @MainActor in
-                            guard let self else { return }
-                            if activity == .reasoning, self.state == .thinking || self.state == .idle {
-                                self.state = .thinking
+            while true {
+                do {
+                    response = try await provider.stream(
+                        messages: context, tools: toolSpecs(), model: model,
+                        onActivity: { [weak self] activity in
+                            Task { @MainActor in
+                                guard let self else { return }
+                                if activity == .reasoning, self.state == .thinking || self.state == .idle {
+                                    self.state = .thinking
+                                }
                             }
-                        }
-                    },
-                    onText: { [weak self] text in
-                        Task { @MainActor in self?.appendStreamText(text) }
-                    },
-                    onReasoning: { [weak self] text in
-                        Task { @MainActor in self?.appendStreamReasoning(text) }
-                    })
-            } catch {
-                if Task.isCancelled { return }
-                clearLiveStreams()
-                state = .failed
-                lastError = error.localizedDescription
-                transcript.append(ChatMessage(role: .assistant,
-                    text: "I hit an error talking to the model: \(error.localizedDescription)"))
-                flushConversation()
-                return
+                        },
+                        onText: { [weak self] text in
+                            Task { @MainActor in self?.appendStreamText(text) }
+                        },
+                        onReasoning: { [weak self] text in
+                            Task { @MainActor in self?.appendStreamReasoning(text) }
+                        })
+                    break
+                } catch {
+                    if Task.isCancelled { return }
+                    if transientRetryAvailable && ProviderRetryPolicy.isTransient(error) {
+                        transientRetryAvailable = false
+                        clearLiveStreams()
+                        beginStream()
+                        try? await Task.sleep(for: .milliseconds(650))
+                        continue
+                    }
+                    clearLiveStreams()
+                    state = .failed
+                    lastError = error.localizedDescription
+                    canContinue = false
+                    lastStopReason = "Provider request failed"
+                    transcript.append(ChatMessage(role: .assistant,
+                        text: "I hit an error talking to the model: \(error.localizedDescription)"))
+                    flushConversation()
+                    return
+                }
             }
             endStream()
             accumulateCost(response.usage, providerID: provider.id)
@@ -627,6 +739,20 @@ final class AgentEngine: ObservableObject {
 
             if response.toolCalls.isEmpty {
                 let text = response.content ?? (liveAssistantText.isEmpty ? "Done." : liveAssistantText)
+                if currentRunExpectsEdits && stagedWriteCount == 0 && !didNudgeForWrite {
+                    didNudgeForWrite = true
+                    context.append(.assistant(text, reasoning: turnReasoning,
+                                              reasoningSignature: response.reasoningSignature,
+                                              reasoningRedactedData: response.reasoningRedactedData))
+                    context.append(.system("""
+                        The user requested implementation, but you have not called
+                        `write_file`. Do not narrate another plan or ask for confirmation.
+                        Use the repository tools now and stage the concrete edits. For
+                        multiple files, stage every required file before finishing.
+                        """))
+                    clearLiveStreams()
+                    continue
+                }
                 context.append(.assistant(text, reasoning: turnReasoning,
                                           reasoningSignature: response.reasoningSignature,
                                           reasoningRedactedData: response.reasoningRedactedData))
@@ -634,7 +760,7 @@ final class AgentEngine: ObservableObject {
                                               toolEvents: toolEvents, reasoning: turnReasoning))
                 liveToolEvents = []
                 clearLiveStreams()
-                state = .done
+                state = pendingChanges.isEmpty ? .done : .awaitingApproval
                 flushConversation()
                 return
             }
@@ -661,22 +787,40 @@ final class AgentEngine: ObservableObject {
             state = .runningTool
 
             for call in response.toolCalls {
+                if let stopReason {
+                    let event = ToolEvent(name: call.name, summary: summary(for: call), status: .failure)
+                    toolEvents.append(event)
+                    liveToolEvents = toolEvents
+                    context.append(.tool("Not run because \(stopReason).", id: call.id, name: call.name))
+                    continue
+                }
                 operationCount += 1
                 let signature = AgentRunBudget.callSignature(call)
                 callCounts[signature, default: 0] += 1
                 if operationCount > AgentRunBudget.maximumOperations {
-                    stopReason = "the operation safety budget was reached"
-                    break
+                    let reason = "the operation safety budget was reached"
+                    stopReason = reason
+                    let event = ToolEvent(name: call.name, summary: summary(for: call), status: .failure)
+                    toolEvents.append(event)
+                    liveToolEvents = toolEvents
+                    context.append(.tool("Not run because \(reason).", id: call.id, name: call.name))
+                    continue
                 }
                 if callCounts[signature, default: 0] > AgentRunBudget.maximumIdenticalCalls {
-                    stopReason = "the model repeated the same operation without making progress"
-                    break
+                    let reason = "the model repeated the same operation without making progress"
+                    stopReason = reason
+                    let event = ToolEvent(name: call.name, summary: summary(for: call), status: .failure)
+                    toolEvents.append(event)
+                    liveToolEvents = toolEvents
+                    context.append(.tool("Not run because \(reason).", id: call.id, name: call.name))
+                    continue
                 }
 
                 let event = ToolEvent(name: call.name, summary: summary(for: call), status: .running)
                 toolEvents.append(event)
                 liveToolEvents = toolEvents
                 let result = await execute(call: call, workspace: workspace, vision: vision)
+                if call.name == "write_file", result.success { stagedWriteCount += 1 }
                 if let idx = toolEvents.firstIndex(where: { $0.id == event.id }) {
                     toolEvents[idx].status = result.success ? .success : .failure
                 }
@@ -691,71 +835,41 @@ final class AgentEngine: ObservableObject {
 
             if stopReason != nil { break }
 
+            if settings.spendWarningUSD > 0,
+               lastTurnCostUSD >= settings.spendWarningUSD {
+                stopReason = "the turn reached your \(AgentCostFormatter.string(settings.spendWarningUSD)) spend warning"
+                break
+            }
+
             // If auto-commit is on and we staged changes, commit them now.
             if settings.autoCommit && !pendingChanges.isEmpty {
                 _ = await approveAll()
             }
         }
 
-        await finishBudgetLimitedRun(
-            provider: provider,
-            model: model,
+        finishBudgetLimitedRun(
             toolEvents: toolEvents,
             reason: stopReason ?? "the extended tool-round safety budget was reached"
         )
     }
 
-    /// Give the model one tool-free turn to report the actual result. This
-    /// prevents a budget boundary from masquerading as successful staged work.
-    private func finishBudgetLimitedRun(
-        provider: LLMProvider,
-        model: String,
+    /// Pause deterministically at a safety boundary. Recovery stays in the app's
+    /// Continue control rather than asking the model to invent another prose step.
+    func finishBudgetLimitedRun(
         toolEvents: [ToolEvent],
         reason: String
-    ) async {
-        let finalMessages = context + [.system("""
-            Tool execution has paused because \(reason). Do not request tools.
-            Briefly summarize what was completed, what remains, and whether any
-            files were changed. Be explicit if no changes were staged.
-            """)]
-        state = .thinking
-        beginStream()
-        let fallback = pendingChanges.isEmpty
-            ? "The run paused because \(reason). No changes were staged. Send “Continue” to resume from the current context."
-            : "The run paused because \(reason). \(pendingChanges.count) change\(pendingChanges.count == 1 ? " is" : "s are") staged for review; you can review them or continue."
-
-        let text: String
-        var turnReasoning: String?
-        do {
-            let response = try await provider.stream(
-                messages: finalMessages,
-                tools: [],
-                model: model,
-                onActivity: { _ in },
-                onText: { [weak self] value in
-                    Task { @MainActor in self?.appendStreamText(value) }
-                },
-                onReasoning: { [weak self] value in
-                    Task { @MainActor in self?.appendStreamReasoning(value) }
-                }
-            )
-            endStream()
-            accumulateCost(response.usage, providerID: provider.id)
-            turnReasoning = storedReasoning(from: response)
-            text = response.content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                ? response.content!
-                : fallback
-        } catch {
-            endStream()
-            text = fallback
-        }
-
-        context.append(.assistant(text, reasoning: turnReasoning))
+    ) {
+        let text = pendingChanges.isEmpty
+            ? "Work paused because \(reason). No changes have been staged yet."
+            : "Work paused because \(reason). \(pendingChanges.count) change\(pendingChanges.count == 1 ? " is" : "s are") staged and ready for review."
+        context.append(.assistant(text))
         transcript.append(ChatMessage(role: .assistant, text: text,
-                                      toolEvents: toolEvents, reasoning: turnReasoning))
+                                      toolEvents: toolEvents))
         liveToolEvents = []
         clearLiveStreams()
-        state = pendingChanges.isEmpty ? .done : .awaitingApproval
+        canContinue = true
+        lastStopReason = reason
+        state = pendingChanges.isEmpty ? .paused : .awaitingApproval
         flushConversation()
     }
 
@@ -892,13 +1006,25 @@ final class AgentEngine: ObservableObject {
             oldContent = existing.content
             baseSHA = existing.sha
         }
+        stagePendingChange(path: path, content: content, message: message,
+                           oldContent: oldContent, baseSHA: baseSHA)
+        return ToolResult(text: "Staged a change to \(path) for the user to review. It will NOT be committed until approved.",
+                          success: true)
+    }
+
+    func stagePendingChange(path: String, content: String, message: String,
+                            oldContent: String?, baseSHA: String?) {
         let change = PendingChange(path: path, oldContent: oldContent, newContent: content,
                                    message: message, risks: SecurityScanner.scan(content),
                                    baseSHA: baseSHA)
-        pendingChanges.append(change)
+        if let index = pendingChanges.firstIndex(where: { $0.path == path }) {
+            pendingChanges[index].newContent = content
+            pendingChanges[index].message = message
+            pendingChanges[index].risks = SecurityScanner.scan(content)
+        } else {
+            pendingChanges.append(change)
+        }
         state = .awaitingApproval
-        return ToolResult(text: "Staged a change to \(path) for the user to review. It will NOT be committed until approved.",
-                          success: true)
     }
 
     /// Recursively list file paths (bounded depth) for search.
@@ -961,6 +1087,11 @@ final class AgentEngine: ObservableObject {
         if pendingChanges.isEmpty { state = .done }
     }
 
+    func discardAll() {
+        pendingChanges.removeAll()
+        state = .done
+    }
+
     // MARK: Cost
 
     private func accumulateCost(_ usage: TokenUsage?, providerID: String) {
@@ -968,12 +1099,14 @@ final class AgentEngine: ObservableObject {
         // Rough blended per-1M-token rates for an at-a-glance estimate only.
         let rates: [String: (in: Double, out: Double)] = [
             "openai": (2.5, 10.0), "anthropic": (3.0, 15.0), "gemini": (1.25, 5.0),
-            "deepseek": (0.27, 1.1), "grok": (3.0, 15.0), "mistral": (2.0, 6.0)
+            "deepseek": (0.27, 1.1), "alibaba-token": (1.6, 6.4),
+            "grok": (3.0, 15.0), "mistral": (2.0, 6.0)
         ]
         let rate = rates[providerID] ?? (0, 0)
         let cost = Double(usage.promptTokens) / 1_000_000 * rate.in
                  + Double(usage.completionTokens) / 1_000_000 * rate.out
         sessionCostUSD += cost
+        lastTurnCostUSD += cost
     }
 }
 

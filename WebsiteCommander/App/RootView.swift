@@ -58,13 +58,17 @@ struct RootView: View {
         .onChange(of: engine.state) { oldState, newState in
             guard settings.notificationSoundsEnabled, oldState.isActive else { return }
             switch newState {
-            case .done, .awaitingApproval:
+            case .done:
                 AudioNotificationPlayer.play(settings.completionSound)
             case .failed:
                 AudioNotificationPlayer.play(settings.errorSound)
             default:
                 break
             }
+        }
+        .onChange(of: engine.pendingChanges.count) { oldCount, newCount in
+            guard settings.notificationSoundsEnabled, oldCount == 0, newCount > 0 else { return }
+            AudioNotificationPlayer.play(settings.changesReadySound)
         }
         .sheet(isPresented: $showDebug) {
             DebugBriefSheet(onSendToAgent: { prompt in

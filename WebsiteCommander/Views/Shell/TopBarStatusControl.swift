@@ -48,6 +48,7 @@ enum AgentStatusPresentation: String, CaseIterable {
         case .runningTool:      return .working
         case .committing:       return .working
         case .awaitingApproval: return .waiting
+        case .paused:           return .waiting
         case .failed:           return .failed
         case .idle, .done:      return pendingChanges > 0 ? .reviewing : .ready
         }

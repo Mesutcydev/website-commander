@@ -80,6 +80,22 @@ struct WebsiteCommanderApp: App {
                 }
                 .keyboardShortcut("k", modifiers: .command)
             }
+            CommandMenu("Agent") {
+                Button("Send Message") {
+                    NotificationCenter.default.post(name: .requestAgentSend, object: nil)
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                Button("Stop") {
+                    NotificationCenter.default.post(name: .requestAgentStop, object: nil)
+                }
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(!engine.isRunActive)
+                Button("Approve All Changes") {
+                    NotificationCenter.default.post(name: .requestApproveAll, object: nil)
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(engine.pendingChanges.isEmpty)
+            }
             CommandGroup(after: .appInfo) {
                 Button(updater.checking ? "Checking for Updates…" : "Check for Updates…") {
                     Task { await updater.check(feedURL: settings.updateFeedURL, userInitiated: true) }

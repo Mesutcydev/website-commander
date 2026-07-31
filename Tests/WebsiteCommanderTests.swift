@@ -7,6 +7,32 @@ import SwiftUI
 /// avoid the network and the main actor.
 final class WebsiteCommanderTests: XCTestCase {
 
+    private struct StubProvider: LLMProvider {
+        var id = "openai"
+        var displayName = "Stub"
+        var models = ["stub"]
+        var defaultModel = "stub"
+        var response = LLMResponse(content: "Done.", toolCalls: [], usage: nil)
+        var delay: Duration?
+
+        func complete(messages: [LLMMessage], tools: [ToolSpec], model: String) async throws -> LLMResponse {
+            if let delay { try await Task.sleep(for: delay) }
+            return response
+        }
+    }
+
+    @MainActor
+    private func makeAgentEngine() -> AgentEngine {
+        let settings = SettingsStore()
+        let workspace = SiteWorkspace(name: "Agent Test", gitOwner: "octocat",
+                                      gitRepo: "hello-world", gitBranch: "main",
+                                      techStack: .vanillaHTML, deployment: .githubPages,
+                                      defaultModel: "stub")
+        settings.workspaces = [workspace]
+        settings.activeWorkspaceID = workspace.id
+        return AgentEngine(settings: settings, browserController: BrowserController())
+    }
+
     // MARK: - Agent workspace layout + activity grouping
 
     func testWorkspaceDefaultSplitUsesThirtyEightPercent() {
@@ -45,6 +71,97 @@ final class WebsiteCommanderTests: XCTestCase {
         let call = LLMToolCall(id: "one", name: "read_file", argumentsJSON: #"{"path":"index.html"}"#)
         let sameOperation = LLMToolCall(id: "two", name: "read_file", argumentsJSON: #"{"path":"index.html"}"#)
         XCTAssertEqual(AgentRunBudget.callSignature(call), AgentRunBudget.callSignature(sameOperation))
+    }
+
+    func testTransientProviderRetryPolicy() {
+        XCTAssertTrue(ProviderRetryPolicy.isTransient(LLMError.http(429, "rate limited")))
+        XCTAssertTrue(ProviderRetryPolicy.isTransient(LLMError.http(503, "unavailable")))
+        XCTAssertTrue(ProviderRetryPolicy.isTransient(URLError(.networkConnectionLost)))
+        XCTAssertFalse(ProviderRetryPolicy.isTransient(LLMError.http(401, "unauthorized")))
+        XCTAssertFalse(ProviderRetryPolicy.isTransient(LLMError.decoding("bad payload")))
+    }
+
+    @MainActor
+    func testContinueRunDoesNotAppendUserTurn() async {
+        let engine = makeAgentEngine()
+        engine.transcript.append(ChatMessage(role: .user, text: "fix the footer"))
+        engine.finishBudgetLimitedRun(toolEvents: [], reason: "test pause")
+        let userCount = engine.transcript.filter { $0.role == .user }.count
+
+        engine.continueRun(using: StubProvider())
+        try? await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(engine.transcript.filter { $0.role == .user }.count, userCount)
+        XCTAssertFalse(engine.canContinue)
+        XCTAssertFalse(engine.isRunActive)
+    }
+
+    @MainActor
+    func testStageAndDiscardAllChanges() {
+        let engine = makeAgentEngine()
+        engine.stagePendingChange(path: "index.html", content: "<h1>New</h1>",
+                                  message: "Update heading", oldContent: "<h1>Old</h1>",
+                                  baseSHA: "abc")
+        engine.stagePendingChange(path: "style.css", content: "body { color: black; }",
+                                  message: "Update color", oldContent: "", baseSHA: "def")
+        XCTAssertEqual(engine.pendingChanges.count, 2)
+        XCTAssertEqual(engine.state, .awaitingApproval)
+
+        engine.discardAll()
+
+        XCTAssertTrue(engine.pendingChanges.isEmpty)
+        XCTAssertEqual(engine.state, .done)
+    }
+
+    @MainActor
+    func testLastTurnCostResetsWhenContinuing() async {
+        let engine = makeAgentEngine()
+        engine.finishBudgetLimitedRun(toolEvents: [], reason: "first pause")
+        let charged = StubProvider(response: LLMResponse(
+            content: "Done.", toolCalls: [],
+            usage: TokenUsage(promptTokens: 1_000, completionTokens: 1_000)
+        ))
+        engine.continueRun(using: charged)
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertGreaterThan(engine.lastTurnCostUSD, 0)
+        let sessionCost = engine.sessionCostUSD
+
+        engine.finishBudgetLimitedRun(toolEvents: [], reason: "second pause")
+        engine.continueRun(using: StubProvider())
+        try? await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(engine.lastTurnCostUSD, 0)
+        XCTAssertEqual(engine.sessionCostUSD, sessionCost)
+    }
+
+    @MainActor
+    func testCancelPreservesStagedChangesAndAllowsContinue() async {
+        let engine = makeAgentEngine()
+        engine.finishBudgetLimitedRun(toolEvents: [], reason: "initial pause")
+        engine.continueRun(using: StubProvider(delay: .seconds(2)))
+        engine.stagePendingChange(path: "app.js", content: "export default true",
+                                  message: "Update app", oldContent: "", baseSHA: "abc")
+
+        engine.cancelGeneration()
+
+        XCTAssertEqual(engine.pendingChanges.count, 1)
+        XCTAssertEqual(engine.state, .awaitingApproval)
+        XCTAssertTrue(engine.canContinue)
+        engine.continueRun(using: StubProvider())
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(engine.pendingChanges.count, 1)
+        XCTAssertFalse(engine.isRunActive)
+    }
+
+    @MainActor
+    func testBudgetPauseExposesContinueWithoutClaimingCompletion() {
+        let engine = makeAgentEngine()
+        engine.finishBudgetLimitedRun(toolEvents: [], reason: "operation safety budget reached")
+
+        XCTAssertTrue(engine.canContinue)
+        XCTAssertEqual(engine.lastStopReason, "operation safety budget reached")
+        XCTAssertEqual(engine.state, .paused)
+        XCTAssertTrue(engine.transcript.last?.text.contains("paused") == true)
     }
 
     func testTextAttachmentIsDecodedAndSizeLimited() {

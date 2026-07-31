@@ -769,6 +769,20 @@ struct BehaviorSettingsTab: View {
                     title: "Auto-commit (skip the approval step)",
                     detail: "When on, approved edits commit immediately without a diff review. Recommended off.",
                     isOn: $settings.autoCommit)
+                SettingsRowDivider()
+                FormRow(label: "Spend warning",
+                        footnote: "Pauses the run for review; it never discards staged work.") {
+                    HStack(spacing: 4) {
+                        Text("$")
+                            .font(Theme.ui(13))
+                            .foregroundStyle(Theme.secondaryText)
+                        TextField("", value: $settings.spendWarningUSD,
+                                  format: .number.precision(.fractionLength(2)))
+                            .frame(width: 70)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Per-turn spend warning in dollars")
+                    }
+                }
             }
 
             SettingsSection(title: "Appearance") {
@@ -791,6 +805,9 @@ struct BehaviorSettingsTab: View {
                 if settings.notificationSoundsEnabled {
                     SettingsRowDivider()
                     soundPicker(title: "Task completed", selection: $settings.completionSound)
+                    SettingsRowDivider()
+                    soundPicker(title: "Changes ready", selection: $settings.changesReadySound)
+                    SettingsRowDivider()
                     soundPicker(title: "Task failed", selection: $settings.errorSound)
                 }
             }

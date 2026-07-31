@@ -76,7 +76,9 @@ final class SettingsStore: ObservableObject {
     @Published var hasCompletedOnboarding: Bool = false { didSet { save() } }
     @Published var notificationSoundsEnabled: Bool = true { didSet { save() } }
     @Published var completionSound: NotificationSound = .tink { didSet { save() } }
+    @Published var changesReadySound: NotificationSound = .pop { didSet { save() } }
     @Published var errorSound: NotificationSound = .basso { didSet { save() } }
+    @Published var spendWarningUSD: Double = 1.0 { didSet { save() } }
 
     // Custom OpenAI-compatible provider configuration.
     @Published var customBaseURL: String = "" { didSet { save() } }
@@ -302,7 +304,9 @@ final class SettingsStore: ObservableObject {
         var updateFeedURL: String
         var notificationSoundsEnabled: Bool
         var completionSound: NotificationSound
+        var changesReadySound: NotificationSound
         var errorSound: NotificationSound
+        var spendWarningUSD: Double
 
         // Backward-compatible decode: older settings files predate some fields
         // (notably githubAccounts). Missing keys fall back to defaults instead of
@@ -328,7 +332,9 @@ final class SettingsStore: ObservableObject {
             updateFeedURL = (try? c.decode(String.self, forKey: .updateFeedURL)) ?? ""
             notificationSoundsEnabled = (try? c.decode(Bool.self, forKey: .notificationSoundsEnabled)) ?? true
             completionSound = (try? c.decode(NotificationSound.self, forKey: .completionSound)) ?? .tink
+            changesReadySound = (try? c.decode(NotificationSound.self, forKey: .changesReadySound)) ?? .pop
             errorSound = (try? c.decode(NotificationSound.self, forKey: .errorSound)) ?? .basso
+            spendWarningUSD = (try? c.decode(Double.self, forKey: .spendWarningUSD)) ?? 1.0
         }
 
         init(workspaces: [SiteWorkspace], activeWorkspaceID: UUID?, providerID: String, model: String,
@@ -337,7 +343,8 @@ final class SettingsStore: ObservableObject {
              cloudSyncEnabled: Bool, githubAccounts: [GitHubCredential],
              localBridgeEnabled: Bool, localBridgePort: Int, preferOnDevice: Bool,
              updateFeedURL: String, notificationSoundsEnabled: Bool,
-             completionSound: NotificationSound, errorSound: NotificationSound) {
+             completionSound: NotificationSound, changesReadySound: NotificationSound,
+             errorSound: NotificationSound, spendWarningUSD: Double) {
             self.workspaces = workspaces
             self.activeWorkspaceID = activeWorkspaceID
             self.providerID = providerID
@@ -357,7 +364,9 @@ final class SettingsStore: ObservableObject {
             self.updateFeedURL = updateFeedURL
             self.notificationSoundsEnabled = notificationSoundsEnabled
             self.completionSound = completionSound
+            self.changesReadySound = changesReadySound
             self.errorSound = errorSound
+            self.spendWarningUSD = spendWarningUSD
         }
     }
 
@@ -431,7 +440,9 @@ final class SettingsStore: ObservableObject {
         updateFeedURL = snap.updateFeedURL
         notificationSoundsEnabled = snap.notificationSoundsEnabled
         completionSound = snap.completionSound
+        changesReadySound = snap.changesReadySound
         errorSound = snap.errorSound
+        spendWarningUSD = snap.spendWarningUSD
     }
 
     private func save() {
@@ -461,7 +472,9 @@ final class SettingsStore: ObservableObject {
             updateFeedURL: updateFeedURL,
             notificationSoundsEnabled: notificationSoundsEnabled,
             completionSound: completionSound,
-            errorSound: errorSound
+            changesReadySound: changesReadySound,
+            errorSound: errorSound,
+            spendWarningUSD: spendWarningUSD
         )
         guard let data = try? JSONEncoder().encode(snap) else { return }
         try? data.write(to: Self.fileURL, options: .atomic)

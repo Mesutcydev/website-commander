@@ -59,7 +59,7 @@ struct ProviderAvatar: View {
     private var ringTint: Color {
         switch state {
         case .failed: return Theme.danger
-        case .awaitingApproval: return Theme.warning
+        case .awaitingApproval, .paused: return Theme.warning
         case .done: return Theme.success
         default: return Theme.accent
         }
