@@ -36,6 +36,8 @@ struct WebView: NSViewRepresentable {
     var reloadToken: UUID
     @ObservedObject var browser: BrowserController
 
+    typealias NSViewType = WKWebView
+
     func makeCoordinator() -> Coordinator {
         Coordinator(inspector: browser.inspector)
     }
@@ -95,17 +97,25 @@ struct WebView: NSViewRepresentable {
 /// Analyze / Fix-with-AI actions that hand the live page to the agent.
 struct PreviewView: View {
 
+    var embedded = false
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var engine: AgentEngine
     @EnvironmentObject var browser: BrowserController
-    @Environment(\.sidebarSelection) private var sidebarSelection
+    @Environment(\.destination) private var destination
 
+    @AppStorage("preview.device") private var persistedDevice = Device.desktop.rawValue
     @State private var device: Device = .desktop
     @State private var reloadToken = UUID()
     @State private var showInspector = false
     @State private var auditIssues: [SiteAuditIssue] = []
     @State private var showAudit = false
     @State private var isAuditing = false
+    @State private var isReloading = false
+
+    /// The narrowest width a "Desktop" viewport is allowed to report to the
+    /// page. Surfaces wider than this render 1:1 and fill; narrower ones render
+    /// at this width and scale down so desktop breakpoints still apply.
+    static let desktopViewportFloor: CGFloat = 900
 
     enum Device: String, CaseIterable, Identifiable {
         case mobile = "Mobile", tablet = "Tablet", desktop = "Desktop"
@@ -133,54 +143,30 @@ struct PreviewView: View {
 
     var body: some View {
         Group {
-            if liveURL == nil {
-                EmptyStateView(systemImage: "eye.slash",
-                               title: "No live URL configured",
-                               message: "Set a homepage/live URL on the workspace to preview it here.")
+            if embedded {
+                embeddedPreview
             } else {
-                VSplitView {
-                    previewCanvas.frame(minHeight: 320)
-                    if showInspector {
-                        InspectorPanel(inspector: browser.inspector)
-                            .frame(minHeight: 180, idealHeight: 260)
+                previewContent
+                    .navigationTitle("Preview")
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            devicePicker
+                        }
+                        ToolbarItemGroup(placement: .primaryAction) {
+                            inspectorBadges
+                            previewActionButtons
+                        }
                     }
-                }
-            }
-        }
-        .navigationTitle("Preview")
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("", selection: $device) {
-                    ForEach(Device.allCases) { d in Label(d.rawValue, systemImage: d.icon).tag(d) }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 300)
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
-                inspectorBadges
-                Button { Task { await runAudit() } } label: {
-                    if isAuditing { ProgressView().controlSize(.small) }
-                    else { Label("Audit", systemImage: "checkmark.shield") }
-                }
-                .disabled(!browser.isAvailable)
-                Button { analyzeWithAI() } label: {
-                    Label("Analyze with AI", systemImage: "sparkles")
-                }
-                .disabled(!browser.isAvailable)
-                Button { NotificationCenter.default.post(name: .requestDebug, object: nil) } label: {
-                    Label("Debug", systemImage: "ladybug.fill")
-                }
-                Button { reloadToken = UUID() } label: {
-                    Label("Reload", systemImage: "arrow.clockwise")
-                }
-                Button { withAnimation { showInspector.toggle() } } label: {
-                    Label("Inspector", systemImage: showInspector ? "wand.and.rays.inverse" : "wand.and.rays")
-                }
-                .tint(showInspector ? Theme.accent : nil)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .refreshPreview)) { _ in
-            reloadToken = UUID()
+            reload()
+        }
+        .onAppear {
+            device = Device(rawValue: persistedDevice) ?? .desktop
+        }
+        .onChange(of: device) { _, value in
+            persistedDevice = value.rawValue
         }
         .sheet(isPresented: $showAudit) {
             AuditSheet(issues: auditIssues, url: liveURL?.absoluteString ?? "") {
@@ -189,13 +175,163 @@ struct PreviewView: View {
         }
     }
 
+    /// The preview surface on the shared workspace grid: one control row, then a
+    /// canvas that fills every remaining point of width. The only thing allowed
+    /// to reduce it is the standard workspace gutter.
+    private var embeddedPreview: some View {
+        GeometryReader { proxy in
+            let gutter = AgentWorkspaceMetrics.gutter(for: proxy.size.width)
+            VStack(spacing: 0) {
+                embeddedControlBar(gutter: gutter)
+                previewContent
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
+                            .strokeBorder(Theme.Chrome.barControlBorder, lineWidth: 1)
+                    }
+                    .padding(.horizontal, gutter)
+                    .padding(.bottom, 20)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var previewContent: some View {
+        if liveURL == nil {
+            EmptyStateView(systemImage: "eye.slash",
+                           title: "No live URL configured",
+                           message: "Set a homepage/live URL on the workspace to preview it here.")
+        } else if showInspector {
+            VSplitView {
+                previewCanvas.frame(minHeight: 320)
+                InspectorPanel(inspector: browser.inspector)
+                    .frame(minHeight: 180, idealHeight: 260)
+            }
+        } else {
+            previewCanvas
+        }
+    }
+
+    /// One row, on the workspace gutter: the real address, the viewport presets,
+    /// real console counts, and the preview's own actions.
+    private func embeddedControlBar(gutter: CGFloat) -> some View {
+        WorkspaceCommandRow(gutter: gutter) {
+            HStack(spacing: 6) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(liveURL == nil ? Theme.Chrome.textMuted : Theme.success)
+                Text(liveURL?.absoluteString ?? String(localized: "No live URL"))
+                    .font(Theme.ui(12, .medium))
+                    .foregroundStyle(Theme.Chrome.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: TopBarMetrics.controlHeight)
+            .frame(minWidth: 0, alignment: .leading)
+            .background {
+                let shape = RoundedRectangle(cornerRadius: TopBarMetrics.controlRadius,
+                                             style: .continuous)
+                shape
+                    .fill(Theme.Chrome.barControlFill)
+                    .overlay { shape.strokeBorder(Theme.Chrome.barControlBorder, lineWidth: 1) }
+            }
+            .accessibilityLabel("Preview address: \(liveURL?.absoluteString ?? String(localized: "none"))")
+
+            Button {
+                guard let liveURL else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(liveURL.absoluteString, forType: .string)
+            } label: {
+                Label("Copy URL", systemImage: "doc.on.doc")
+            }
+            .labelStyle(.iconOnly)
+            .disabled(liveURL == nil)
+            .help("Copy preview URL")
+
+            Button {
+                if let liveURL { NSWorkspace.shared.open(liveURL) }
+            } label: {
+                Label("Open in browser", systemImage: "arrow.up.right.square")
+            }
+            .labelStyle(.iconOnly)
+            .disabled(liveURL == nil)
+            .help("Open in the default browser")
+
+            Spacer(minLength: TopBarMetrics.groupGap)
+
+            devicePicker
+            inspectorBadges
+            previewActionButtons
+                .labelStyle(.iconOnly)
+        }
+    }
+
+    private var devicePicker: some View {
+        Picker("", selection: $device) {
+            ForEach(Device.allCases) { d in
+                Label(LocalizedStringKey(d.rawValue), systemImage: d.icon).tag(d)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 190)
+        .help("Viewport preset")
+    }
+
+    @ViewBuilder
+    private var previewActionButtons: some View {
+        Button { Task { await runAudit() } } label: {
+            if isAuditing { ProgressView().controlSize(.small) }
+            else { Label("Audit", systemImage: "checkmark.shield") }
+        }
+        .disabled(!browser.isAvailable)
+
+        Button { analyzeWithAI() } label: {
+            Label("Analyze with AI", systemImage: "sparkles")
+        }
+        .disabled(!browser.isAvailable)
+
+        Button { NotificationCenter.default.post(name: .requestDebug, object: nil) } label: {
+            Label("Debug", systemImage: "ladybug.fill")
+        }
+
+        Button { reload() } label: {
+            if isReloading {
+                ProgressView().controlSize(.small)
+            } else {
+                Label("Reload", systemImage: "arrow.clockwise")
+            }
+        }
+        .disabled(isReloading || liveURL == nil)
+        .help(isReloading ? "Reloading preview" : "Reload preview")
+
+        Button { withAnimation { showInspector.toggle() } } label: {
+            Label("Inspector", systemImage: showInspector ? "wand.and.rays.inverse" : "wand.and.rays")
+        }
+        .tint(showInspector ? Theme.accent : nil)
+    }
+
     private var inspectorBadges: some View {
         HStack(spacing: 6) {
-            if browser.inspector.errorCount > 0 {
-                Badge(text: "\(browser.inspector.errorCount)", systemImage: "xmark.octagon.fill", tint: Theme.danger)
-            }
-            if browser.inspector.warnCount > 0 {
-                Badge(text: "\(browser.inspector.warnCount)", systemImage: "exclamationmark.triangle.fill", tint: Theme.warning)
+            if browser.inspector.errorCount > 0 || browser.inspector.warnCount > 0 {
+                Button {
+                    showInspector = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if browser.inspector.errorCount > 0 {
+                            Badge(text: "\(browser.inspector.errorCount)", systemImage: "xmark.octagon.fill", tint: Theme.danger)
+                        }
+                        if browser.inspector.warnCount > 0 {
+                            Badge(text: "\(browser.inspector.warnCount)", systemImage: "exclamationmark.triangle.fill", tint: Theme.warning)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Open console issues")
             }
         }
     }
@@ -211,11 +347,21 @@ struct PreviewView: View {
         showAudit = true
     }
 
+    private func reload() {
+        guard !isReloading, liveURL != nil else { return }
+        isReloading = true
+        reloadToken = UUID()
+        Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            isReloading = false
+        }
+    }
+
     /// Hand the live page to the agent for a free-form analysis.
     private func analyzeWithAI() {
         engine.prefilledPrompt = SiteAuditor.analyzePrompt(url: liveURL?.absoluteString ?? "the preview")
         engine.newChat()
-        sidebarSelection.wrappedValue = .agent
+        destination.wrappedValue = .agent
     }
 
     /// Send the current audit issues to the agent to fix.
@@ -223,32 +369,68 @@ struct PreviewView: View {
         showAudit = false
         engine.prefilledPrompt = SiteAuditor.fixPrompt(for: auditIssues, url: liveURL?.absoluteString ?? "the preview")
         engine.newChat()
-        sidebarSelection.wrappedValue = .agent
+        destination.wrappedValue = .agent
     }
 
+    @ViewBuilder
     private var previewCanvas: some View {
-        ScrollView {
-            WebView(url: liveURL, reloadToken: reloadToken, browser: browser)
-                .frame(width: device.width ?? 1200)
-                .frame(minHeight: 600)
-                .background(Color.white)
-                .clipShape(RoundedRectangle(cornerRadius: device == .desktop ? 4 : 22))
-                .overlay(RoundedRectangle(cornerRadius: device == .desktop ? 4 : 22)
-                    .strokeBorder(Theme.hairline, lineWidth: 1))
-                .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
-                .padding(Theme.Space.xl)
-                .frame(maxWidth: .infinity)
-        }
-        .background(Color.primary.opacity(0.03))
-        .overlay(alignment: .top) {
-            if browser.inspector.inspectMode {
-                Text("Inspect mode — click any element on the page")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(Theme.warning, in: Capsule())
-                    .foregroundStyle(.black)
-                    .padding(.top, Theme.Space.s)
+        if device == .desktop {
+            // Desktop means "use the room we have". The viewport only becomes a
+            // fixed, scaled-down 900pt canvas when the surface is genuinely
+            // narrower than a desktop breakpoint — otherwise a responsive site
+            // would switch to its mobile layout in the split pane despite
+            // "Desktop" being selected. Above 900pt the web view simply fills
+            // the width at 1:1, which is what stops a fixed 900pt viewport
+            // leaving a blank white strip on the trailing edge.
+            GeometryReader { proxy in
+                let available = max(proxy.size.width, 1)
+                let viewportWidth = max(Self.desktopViewportFloor, available)
+                let scale = min(1, available / viewportWidth)
+                let viewportHeight = scale < 1
+                    ? max(proxy.size.height / scale, 720)
+                    : max(proxy.size.height, 1)
+
+                WebView(url: liveURL, reloadToken: reloadToken, browser: browser)
+                    .frame(width: viewportWidth, height: viewportHeight)
+                    .scaleEffect(scale, anchor: .topLeading)
+                    .frame(width: proxy.size.width,
+                           height: proxy.size.height,
+                           alignment: .topLeading)
+                    .clipped()
+                    .background(Color.white)
+                    .overlay(alignment: .top) {
+                        inspectModeBanner
+                    }
+                }
+        } else {
+            ScrollView([.horizontal, .vertical]) {
+                WebView(url: liveURL, reloadToken: reloadToken, browser: browser)
+                    .frame(width: device.width)
+                    .frame(minHeight: 600)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 22))
+                    .overlay(RoundedRectangle(cornerRadius: 22)
+                        .strokeBorder(Theme.hairline, lineWidth: 1))
+                    .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
+                    .padding(Theme.Space.xl)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.primary.opacity(0.03))
+            .overlay(alignment: .top) {
+                inspectModeBanner
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var inspectModeBanner: some View {
+        if browser.inspector.inspectMode {
+            Text("Inspect mode — click any element on the page")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .background(Theme.warning, in: Capsule())
+                .foregroundStyle(.black)
+                .padding(.top, Theme.Space.s)
         }
     }
 }
@@ -308,7 +490,7 @@ struct InspectorPanel: View {
                 }
             }
         }
-        .background(.regularMaterial)
+        .background(Theme.panelFill)
     }
 }
 

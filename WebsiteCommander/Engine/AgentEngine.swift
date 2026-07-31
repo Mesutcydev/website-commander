@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// High-level agent lifecycle state, surfaced in the chat toolbar.
 enum AgentState: String {
@@ -7,14 +10,14 @@ enum AgentState: String {
 
     var label: String {
         switch self {
-        case .idle:             return "Ready"
-        case .thinking:         return "Thinking…"
-        case .streaming:        return "Writing…"
-        case .runningTool:      return "Working…"
-        case .awaitingApproval: return "Awaiting approval"
-        case .committing:       return "Committing…"
-        case .done:             return "Done"
-        case .failed:           return "Failed"
+        case .idle:             return String(localized: "Ready")
+        case .thinking:         return String(localized: "Thinking…")
+        case .streaming:        return String(localized: "Writing…")
+        case .runningTool:      return String(localized: "Working…")
+        case .awaitingApproval: return String(localized: "Awaiting approval")
+        case .committing:       return String(localized: "Committing…")
+        case .done:             return String(localized: "Done")
+        case .failed:           return String(localized: "Failed")
         }
     }
 
@@ -23,6 +26,19 @@ enum AgentState: String {
         case .thinking, .streaming, .runningTool, .committing: return true
         default: return false
         }
+    }
+}
+
+/// Safety budget for a tool-using turn. The old implementation stopped after
+/// eight model rounds regardless of progress, which was too small for normal
+/// inspect → edit → verify work and produced a misleading staged-changes result.
+struct AgentRunBudget {
+    static let maximumRounds = 24
+    static let maximumOperations = 80
+    static let maximumIdenticalCalls = 4
+
+    static func callSignature(_ call: LLMToolCall) -> String {
+        "\(call.name):\(call.argumentsJSON)"
     }
 }
 
@@ -43,8 +59,11 @@ final class AgentEngine: ObservableObject {
 
     // MARK: Published state
 
-    @Published var transcript: [ChatMessage] = []
+    /// The visible conversation. Every mutation schedules an autosave — the
+    /// user never saves a chat by hand.
+    @Published var transcript: [ChatMessage] = [] { didSet { scheduleAutosave() } }
     @Published var pendingChanges: [PendingChange] = []
+    @Published var liveToolEvents: [ToolEvent] = []
     @Published var state: AgentState = .idle
     @Published var lastError: String?
     @Published var sessionCostUSD: Double = 0
@@ -54,8 +73,14 @@ final class AgentEngine: ObservableObject {
     /// Live, cumulative assistant text while a streaming response is in flight.
     /// The Chat view renders this as a growing bubble; cleared when the turn ends.
     @Published var liveAssistantText: String = ""
+    /// Live, cumulative provider reasoning / thinking text (only when the
+    /// model actually streams it). Cleared when the turn ends.
+    @Published var liveReasoningText: String = ""
     private var streamBuffer: String = ""
+    private var reasoningBuffer: String = ""
     private var streamLastPublish: Date = .distantPast
+    private var reasoningLastPublish: Date = .distantPast
+    private var activeTask: Task<Void, Never>?
 
     /// Throttled (~30 Hz) update of the live bubble, hop-safe from any actor.
     func appendStreamText(_ cumulative: String) {
@@ -67,22 +92,62 @@ final class AgentEngine: ObservableObject {
         if state == .thinking { state = .streaming }
     }
 
+    /// Throttled update for streaming reasoning / thinking content.
+    func appendStreamReasoning(_ cumulative: String) {
+        reasoningBuffer = cumulative
+        let now = Date()
+        guard now.timeIntervalSince(reasoningLastPublish) > 0.033 else { return }
+        reasoningLastPublish = now
+        liveReasoningText = reasoningBuffer
+        if state == .idle || state == .done { return }
+        // Stay on thinking while only reasoning is arriving; flip to streaming
+        // once visible reply text starts.
+        if state != .streaming && liveAssistantText.isEmpty {
+            state = .thinking
+        }
+    }
+
     private func beginStream() {
         streamBuffer = ""
+        reasoningBuffer = ""
         streamLastPublish = .distantPast
+        reasoningLastPublish = .distantPast
         liveAssistantText = ""
+        liveReasoningText = ""
     }
 
     private func endStream() {
         liveAssistantText = streamBuffer   // flush any throttled tail
+        liveReasoningText = reasoningBuffer
         streamBuffer = ""
+        reasoningBuffer = ""
+    }
+
+    private func clearLiveStreams() {
+        liveAssistantText = ""
+        liveReasoningText = ""
+        streamBuffer = ""
+        reasoningBuffer = ""
+    }
+
+    private func storedReasoning(from response: LLMResponse) -> String? {
+        let live = liveReasoningText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let r = response.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines), !r.isEmpty {
+            return r
+        }
+        return live.isEmpty ? nil : live
     }
 
     let settings: SettingsStore
     let browserController: BrowserController
     /// Set by the app after construction; enables saved conversations.
-    var conversationStore: ConversationStore?
+    var conversationStore: ConversationStore? {
+        didSet { flushConversation() }
+    }
     @Published var currentConversationID: UUID?
+    /// The workspace a conversation belongs to, captured when it starts so a
+    /// site switch mid-chat cannot re-home an existing conversation.
+    private(set) var currentConversationWorkspaceID: UUID?
 
     /// The model context window (system + turns + tool results). Persists across
     /// sends within a session; reset by `newChat()`.
@@ -92,6 +157,7 @@ final class AgentEngine: ObservableObject {
         self.settings = settings
         self.browserController = browserController
         rebuildSystemPrompt()
+        observeAppLifecycle()
     }
 
     // MARK: GitHub access
@@ -105,46 +171,132 @@ final class AgentEngine: ObservableObject {
     // MARK: Session control
 
     func newChat() {
-        transcript = []
+        // Never drop work in progress: the outgoing chat lands on disk before
+        // the transcript is cleared.
+        flushConversation()
+        activeTask?.cancel()
+        activeTask = nil
+        withAutosaveSuspended {
+            transcript = []
+            currentConversationID = nil
+            currentConversationWorkspaceID = nil
+        }
         pendingChanges = []
+        liveToolEvents = []
         state = .idle
         lastError = nil
         lastCommitNote = nil
-        liveAssistantText = ""
-        streamBuffer = ""
-        currentConversationID = nil
+        clearLiveStreams()
         rebuildSystemPrompt()
-    }
-
-    /// Persist the current transcript (no-op if empty). Updates in place when a
-    /// conversation is already loaded.
-    @discardableResult
-    func saveCurrentConversation(title: String? = nil) -> SavedConversation? {
-        guard let store = conversationStore else { return nil }
-        let saved = store.save(title: title, messages: transcript,
-                               workspaceID: settings.activeWorkspace?.id,
-                               id: currentConversationID)
-        currentConversationID = saved?.id
-        return saved
     }
 
     /// Replace the live transcript with a saved conversation and rebuild context.
     func loadConversation(_ conv: SavedConversation) {
-        transcript = conv.messages
+        // Persist whatever was on screen before it is replaced.
+        flushConversation()
+        activeTask?.cancel()
+        activeTask = nil
+        withAutosaveSuspended {
+            transcript = conv.messages
+            currentConversationID = conv.id
+            currentConversationWorkspaceID = conv.workspaceID
+        }
         pendingChanges = []
         state = .idle
         lastError = nil
-        liveAssistantText = ""
-        streamBuffer = ""
-        currentConversationID = conv.id
+        clearLiveStreams()
         rebuildSystemPrompt()
         for message in conv.messages {
             switch message.role {
             case .user: context.append(.user(message.text))
-            case .assistant: context.append(.assistant(message.text))
+            case .assistant:
+                context.append(.assistant(message.text, reasoning: message.reasoning))
             default: break
             }
         }
+    }
+
+    // MARK: Autosave
+
+    /// How long rapid transcript mutations coalesce before hitting disk. Long
+    /// enough that a burst of tool rounds writes once, short enough that a user
+    /// who quits right after a reply keeps it.
+    static let autosaveDebounce: Duration = .milliseconds(500)
+
+    private var autosaveTask: Task<Void, Never>?
+    private var autosaveSuspended = false
+    /// Bumped on every transcript mutation; compared against the last written
+    /// revision so app-switching or repeated flushes cannot rewrite the file
+    /// when nothing actually changed.
+    private var transcriptRevision = 0
+    private var persistedRevision = -1
+
+    private func withAutosaveSuspended(_ body: () -> Void) {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        autosaveSuspended = true
+        body()
+        autosaveSuspended = false
+        persistedRevision = transcriptRevision
+    }
+
+    /// Coalesce transcript mutations into one write shortly after activity stops.
+    private func scheduleAutosave() {
+        transcriptRevision &+= 1
+        guard !autosaveSuspended, conversationStore != nil, !transcript.isEmpty else { return }
+        autosaveTask?.cancel()
+        autosaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: AgentEngine.autosaveDebounce)
+            guard !Task.isCancelled, let self else { return }
+            self.autosaveTask = nil
+            self.persistConversation()
+        }
+    }
+
+    /// Write the conversation to disk immediately, cancelling any pending
+    /// debounce. Called when a turn ends and when the app resigns / quits.
+    @discardableResult
+    func flushConversation() -> SavedConversation? {
+        autosaveTask?.cancel()
+        autosaveTask = nil
+        return persistConversation()
+    }
+
+    @discardableResult
+    private func persistConversation(title: String? = nil) -> SavedConversation? {
+        guard let store = conversationStore, !transcript.isEmpty else { return nil }
+        guard title != nil || transcriptRevision != persistedRevision else { return nil }
+        persistedRevision = transcriptRevision
+        if currentConversationID == nil { currentConversationID = UUID() }
+        if currentConversationWorkspaceID == nil {
+            currentConversationWorkspaceID = settings.activeWorkspace?.id
+        }
+        let saved = store.save(title: title,
+                               messages: transcript,
+                               workspaceID: currentConversationWorkspaceID,
+                               id: currentConversationID)
+        currentConversationID = saved?.id ?? currentConversationID
+        return saved
+    }
+
+    /// Explicit rename of the live conversation. Persistence itself is automatic;
+    /// this only exists so the Conversations list can retitle a chat.
+    @discardableResult
+    func renameCurrentConversation(_ title: String) -> SavedConversation? {
+        persistConversation(title: title)
+    }
+
+    private func observeAppLifecycle() {
+        #if canImport(AppKit)
+        let center = NotificationCenter.default
+        for name: Notification.Name in [NSApplication.willTerminateNotification,
+                                        NSApplication.willResignActiveNotification,
+                                        NSApplication.didHideNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { _ = self?.flushConversation() }
+            }
+        }
+        #endif
     }
 
     func rebuildSystemPrompt() {
@@ -279,13 +431,35 @@ final class AgentEngine: ObservableObject {
 
         lastError = nil
         transcript.append(ChatMessage(role: .user, text: trimmed, attachments: attachments))
+        // A prompt is worth keeping even if the app dies mid-generation.
+        flushConversation()
 
         let images = attachments.filter { $0.isImage }.map {
             LLMImage(mimeType: $0.mimeType, base64: $0.data.base64EncodedString())
         }
-        context.append(.user(trimmed, images: images))
+        var contextualText = trimmed
+        for attachment in attachments where attachment.isTextual {
+            if let text = attachment.asText {
+                contextualText += "\n\n" + PromptGuard.fence(
+                    source: "attachment:\(attachment.filename)",
+                    text
+                )
+            }
+        }
+        context.append(.user(contextualText, images: images))
 
-        Task { await runLoop(provider: provider) }
+        activeTask?.cancel()
+        activeTask = Task { await runLoop(provider: provider) }
+    }
+
+    func cancelGeneration() {
+        guard state.isActive else { return }
+        activeTask?.cancel()
+        activeTask = nil
+        clearLiveStreams()
+        liveToolEvents = []
+        state = pendingChanges.isEmpty ? .done : .awaitingApproval
+        flushConversation()
     }
 
     private func currentProvider() -> LLMProvider? {
@@ -344,52 +518,101 @@ final class AgentEngine: ObservableObject {
         let model = settings.resolvedModel(defaultFor: provider.defaultModel)
         let vision = provider.capabilities(for: model).supportsVision
         var toolEvents: [ToolEvent] = []
-        let maxRounds = 8
+        liveToolEvents = []
+        var operationCount = 0
+        var callCounts: [String: Int] = [:]
+        var stopReason: String?
 
-        for _ in 0..<maxRounds {
+        for _ in 0..<AgentRunBudget.maximumRounds {
+            guard !Task.isCancelled else { return }
             state = .thinking
             beginStream()
             let response: LLMResponse
             do {
                 response = try await provider.stream(
                     messages: context, tools: toolSpecs(), model: model,
-                    onActivity: { _ in },
+                    onActivity: { [weak self] activity in
+                        Task { @MainActor in
+                            guard let self else { return }
+                            if activity == .reasoning, self.state == .thinking || self.state == .idle {
+                                self.state = .thinking
+                            }
+                        }
+                    },
                     onText: { [weak self] text in
                         Task { @MainActor in self?.appendStreamText(text) }
+                    },
+                    onReasoning: { [weak self] text in
+                        Task { @MainActor in self?.appendStreamReasoning(text) }
                     })
             } catch {
-                liveAssistantText = ""
+                if Task.isCancelled { return }
+                clearLiveStreams()
                 state = .failed
                 lastError = error.localizedDescription
                 transcript.append(ChatMessage(role: .assistant,
                     text: "I hit an error talking to the model: \(error.localizedDescription)"))
+                flushConversation()
                 return
             }
             endStream()
             accumulateCost(response.usage, providerID: provider.id)
+            let turnReasoning = storedReasoning(from: response)
 
             if response.toolCalls.isEmpty {
                 let text = response.content ?? (liveAssistantText.isEmpty ? "Done." : liveAssistantText)
-                context.append(.assistant(text))
-                transcript.append(ChatMessage(role: .assistant, text: text, toolEvents: toolEvents))
-                liveAssistantText = ""
+                context.append(.assistant(text, reasoning: turnReasoning,
+                                          reasoningSignature: response.reasoningSignature,
+                                          reasoningRedactedData: response.reasoningRedactedData))
+                transcript.append(ChatMessage(role: .assistant, text: text,
+                                              toolEvents: toolEvents, reasoning: turnReasoning))
+                liveToolEvents = []
+                clearLiveStreams()
                 state = .done
+                flushConversation()
                 return
             }
 
-            // Tool round: drop any pre-tool prose from the live bubble.
-            liveAssistantText = ""
-            // Record the assistant turn that requested tools.
-            context.append(.assistant(response.content, calls: response.toolCalls))
+            // Tool round: keep any real reasoning visible in the transcript so
+            // live thinking doesn't vanish when tools start, then clear the
+            // live buffers for the next model round.
+            if let turnReasoning, !turnReasoning.isEmpty {
+                let prose = (response.content ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                transcript.append(ChatMessage(
+                    role: .assistant,
+                    text: prose,
+                    reasoning: turnReasoning
+                ))
+            }
+            clearLiveStreams()
+            context.append(.assistant(response.content, calls: response.toolCalls,
+                                      reasoning: turnReasoning,
+                                      reasoningSignature: response.reasoningSignature,
+                                      reasoningRedactedData: response.reasoningRedactedData))
             state = .runningTool
 
             for call in response.toolCalls {
+                operationCount += 1
+                let signature = AgentRunBudget.callSignature(call)
+                callCounts[signature, default: 0] += 1
+                if operationCount > AgentRunBudget.maximumOperations {
+                    stopReason = "the operation safety budget was reached"
+                    break
+                }
+                if callCounts[signature, default: 0] > AgentRunBudget.maximumIdenticalCalls {
+                    stopReason = "the model repeated the same operation without making progress"
+                    break
+                }
+
                 let event = ToolEvent(name: call.name, summary: summary(for: call), status: .running)
                 toolEvents.append(event)
+                liveToolEvents = toolEvents
                 let result = await execute(call: call, workspace: workspace, vision: vision)
                 if let idx = toolEvents.firstIndex(where: { $0.id == event.id }) {
                     toolEvents[idx].status = result.success ? .success : .failure
                 }
+                liveToolEvents = toolEvents
                 context.append(.tool(result.text, id: call.id, name: call.name))
                 // Vision models get the screenshot as an image turn so they can see the page.
                 if let base64 = result.imageBase64, let mime = result.imageMime {
@@ -398,15 +621,74 @@ final class AgentEngine: ObservableObject {
                 }
             }
 
+            if stopReason != nil { break }
+
             // If auto-commit is on and we staged changes, commit them now.
             if settings.autoCommit && !pendingChanges.isEmpty {
                 _ = await approveAll()
             }
         }
 
-        transcript.append(ChatMessage(role: .assistant,
-            text: "I've stopped after several steps. Review the staged changes.", toolEvents: toolEvents))
+        await finishBudgetLimitedRun(
+            provider: provider,
+            model: model,
+            toolEvents: toolEvents,
+            reason: stopReason ?? "the extended tool-round safety budget was reached"
+        )
+    }
+
+    /// Give the model one tool-free turn to report the actual result. This
+    /// prevents a budget boundary from masquerading as successful staged work.
+    private func finishBudgetLimitedRun(
+        provider: LLMProvider,
+        model: String,
+        toolEvents: [ToolEvent],
+        reason: String
+    ) async {
+        let finalMessages = context + [.system("""
+            Tool execution has paused because \(reason). Do not request tools.
+            Briefly summarize what was completed, what remains, and whether any
+            files were changed. Be explicit if no changes were staged.
+            """)]
+        state = .thinking
+        beginStream()
+        let fallback = pendingChanges.isEmpty
+            ? "The run paused because \(reason). No changes were staged. Send “Continue” to resume from the current context."
+            : "The run paused because \(reason). \(pendingChanges.count) change\(pendingChanges.count == 1 ? " is" : "s are") staged for review; you can review them or continue."
+
+        let text: String
+        var turnReasoning: String?
+        do {
+            let response = try await provider.stream(
+                messages: finalMessages,
+                tools: [],
+                model: model,
+                onActivity: { _ in },
+                onText: { [weak self] value in
+                    Task { @MainActor in self?.appendStreamText(value) }
+                },
+                onReasoning: { [weak self] value in
+                    Task { @MainActor in self?.appendStreamReasoning(value) }
+                }
+            )
+            endStream()
+            accumulateCost(response.usage, providerID: provider.id)
+            turnReasoning = storedReasoning(from: response)
+            text = response.content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? response.content!
+                : fallback
+        } catch {
+            endStream()
+            text = fallback
+        }
+
+        context.append(.assistant(text, reasoning: turnReasoning))
+        transcript.append(ChatMessage(role: .assistant, text: text,
+                                      toolEvents: toolEvents, reasoning: turnReasoning))
+        liveToolEvents = []
+        clearLiveStreams()
         state = pendingChanges.isEmpty ? .done : .awaitingApproval
+        flushConversation()
     }
 
     private func summary(for call: LLMToolCall) -> String {
@@ -439,6 +721,15 @@ final class AgentEngine: ObservableObject {
         let args = (try? JSONSerialization.jsonObject(with: Data(call.argumentsJSON.utf8))) as? [String: Any] ?? [:]
 
         // Browser tools don't need GitHub.
+        if call.name.hasPrefix("browser_") {
+            let browserReady = await browserController.ensureAvailable()
+            if !browserReady {
+                return ToolResult(
+                    text: "The live preview could not open. Verify that the active site has a valid live URL, then retry.",
+                    success: false
+                )
+            }
+        }
         switch call.name {
         case "browser_look":
             let snapshot = await browserController.snapshotSummary()

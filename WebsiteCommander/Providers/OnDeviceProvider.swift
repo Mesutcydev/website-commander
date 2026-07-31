@@ -18,7 +18,7 @@ struct OnDeviceProvider: LLMProvider {
     var defaultModel: String { "System Model" }
 
     func capabilities(for model: String) -> ModelCapabilities {
-        ModelCapabilities(supportsVision: false, supportsTools: true)
+        ModelCapabilities(supportsVision: false, supportsTools: true, supportsReasoning: false)
     }
 
     /// Whether Apple Intelligence is available on this machine.

@@ -33,8 +33,10 @@ struct DebugBriefSheet: View {
             Divider()
             footer
         }
-        .frame(width: 640, height: 640)
+        .frame(minWidth: 560, idealWidth: 640, minHeight: 520, idealHeight: 640)
+        .background(Theme.canvas)
         .task { await capture() }
+        .onExitCommand { dismiss() }
         .alert("Run agent in Terminal?", isPresented: Binding(
             get: { confirmTerminal != nil },
             set: { if !$0 { confirmTerminal = nil } })) {
@@ -71,16 +73,28 @@ struct DebugBriefSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Debug Brief").font(.title3.weight(.semibold))
                 Text(brief?.context.siteName ?? "—")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(Theme.secondaryText)
                 if let brief {
                     Text("Captured \(brief.generatedAt.formatted(date: .omitted, time: .standard))")
-                        .font(.caption2).foregroundStyle(.tertiary)
+                        .font(.caption2).foregroundStyle(Theme.tertiaryText)
                 }
             }
             Spacer()
             if brief?.hasFindings == false {
                 Badge(text: "All clear", systemImage: "checkmark.shield.fill", tint: Theme.success)
             }
+            Button {
+                dismiss()
+            } label: {
+                Label("Close Debug Brief", systemImage: "xmark")
+                    .frame(width: 28, height: 28)
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+            .background(Theme.cardFill, in: Circle())
+            .overlay(Circle().stroke(Theme.hairline, lineWidth: 1))
+            .help("Close Debug Brief (Esc)")
+            .keyboardShortcut(.cancelAction)
         }
         .padding(Theme.Space.l)
     }
@@ -178,66 +192,95 @@ struct DebugBriefSheet: View {
                     .font(.caption).foregroundStyle(Theme.success)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            HStack(spacing: Theme.Space.s) {
-                Menu {
-                    if guiEditors.isEmpty {
-                        Text("No editors detected").font(.caption)
-                    } else {
-                        ForEach(guiEditors, id: \.editor.id) { item in
-                            Button("Open in \(item.editor.displayName)") {
-                                openInGUI(item.editor, cli: item.cli)
-                            }
-                        }
-                    }
-                } label: {
-                    Label("Open in editor", systemImage: "square.and.arrow.up")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .disabled(brief == nil)
-
-                Menu {
-                    if cliAgents.isEmpty {
-                        Text("No CLI agents on PATH").font(.caption)
-                    } else {
-                        ForEach(cliAgents, id: \.agent.id) { item in
-                            Button("Run \(item.agent.displayName) in Terminal") {
-                                askTerminal(item.agent, cli: item.cli)
-                            }
-                            .disabled(repoPath == nil)
-                        }
-                    }
-                } label: {
-                    Label("Run in Terminal", systemImage: "terminal")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .disabled(brief == nil || repoPath == nil)
-
-                Menu {
-                    ForEach([AgentTarget.codex, .claude, .opencode, .cursor, .vscode, .clipboard]) { target in
-                        Button("Copy for \(target.displayName)") { copyPrompt(target) }
-                    }
-                } label: {
-                    Label("Copy prompt", systemImage: "doc.on.clipboard")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .disabled(brief == nil)
-
-                Spacer()
-
-                Button {
-                    guard let brief else { return }
-                    onSendToAgent(brief.prompt(for: .inApp, briefPath: briefPath))
-                } label: {
-                    Label("Send to agent", systemImage: "sparkles")
-                }
-                .buttonStyle(.primary)
-                .disabled(brief == nil)
+            ViewThatFits(in: .horizontal) {
+                footerActions(showLabels: true)
+                footerActions(showLabels: false)
             }
         }
         .padding(Theme.Space.l)
+    }
+
+    private func footerActions(showLabels: Bool) -> some View {
+        HStack(spacing: Theme.Space.s) {
+            Menu {
+                if guiEditors.isEmpty {
+                    Text("No editors detected").font(.caption)
+                } else {
+                    ForEach(guiEditors, id: \.editor.id) { item in
+                        Button("Open in \(item.editor.displayName)") {
+                            openInGUI(item.editor, cli: item.cli)
+                        }
+                    }
+                }
+            } label: {
+                footerMenuLabel("Open in editor", systemImage: "square.and.arrow.up", showTitle: showLabels)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(brief == nil)
+            .help("Open the debug brief in an editor")
+
+            Menu {
+                if cliAgents.isEmpty {
+                    Text("No CLI agents on PATH").font(.caption)
+                } else {
+                    ForEach(cliAgents, id: \.agent.id) { item in
+                        Button("Run \(item.agent.displayName) in Terminal") {
+                            askTerminal(item.agent, cli: item.cli)
+                        }
+                        .disabled(repoPath == nil)
+                    }
+                }
+            } label: {
+                footerMenuLabel("Run in Terminal", systemImage: "terminal", showTitle: showLabels)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(brief == nil || repoPath == nil)
+            .help("Run a detected coding agent in Terminal")
+
+            Menu {
+                ForEach([AgentTarget.codex, .claude, .opencode, .cursor, .vscode, .clipboard]) { target in
+                    Button("Copy for \(target.displayName)") { copyPrompt(target) }
+                }
+            } label: {
+                footerMenuLabel("Copy prompt", systemImage: "doc.on.clipboard", showTitle: showLabels)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(brief == nil)
+            .help("Copy a prompt tailored for another agent")
+
+            Spacer(minLength: Theme.Space.s)
+
+            Button {
+                guard let brief else { return }
+                onSendToAgent(brief.prompt(for: .inApp, briefPath: briefPath))
+            } label: {
+                Label("Send to agent", systemImage: "sparkles")
+            }
+            .buttonStyle(.primary)
+            .disabled(brief == nil)
+            .help("Close this brief and continue in Agent Chat")
+
+            if !showLabels {
+                Button("Close") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func footerMenuLabel(_ title: String, systemImage: String, showTitle: Bool) -> some View {
+        if showTitle {
+            Label(title, systemImage: systemImage)
+        } else {
+            Image(systemName: systemImage)
+                .accessibilityLabel(title)
+                .frame(width: 28, height: 28)
+        }
     }
 
     // MARK: Actions

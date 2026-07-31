@@ -170,6 +170,26 @@ with your identity instead of `-` and run `xcrun notarytool submit …`.
 - Per-site agent memory / saved conversations.
 - A VS Code / Cursor extension that talks to the running app over a local socket.
 
+## Typography
+
+App chrome is set in a neo-grotesque rather than the system font. The family is
+resolved at runtime, in order:
+
+1. **Die Grotesk** (Klim Type Foundry) — the reference face. It's a commercial
+   retail family, so this repository can't ship it; if you've licensed it and
+   installed it into `~/Library/Fonts`, the app picks it up automatically with
+   no configuration.
+2. **Hanken Grotesk** — the bundled default (`WebsiteCommander/Resources/Fonts`),
+   same Helvetica/Akzidenz lineage, slightly more open apertures for screen use.
+3. **Helvetica Neue**, then the system font, as fallbacks.
+
+Code, diffs, and terminal output stay monospaced. See
+`WebsiteCommander/DesignSystem/Typography.swift`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Hanken Grotesk © 2021 The Hanken Grotesk Project Authors, licensed under the
+SIL Open Font License 1.1 — see
+[WebsiteCommander/Resources/Fonts/OFL.txt](WebsiteCommander/Resources/Fonts/OFL.txt).

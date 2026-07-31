@@ -9,7 +9,7 @@ enum BrowserError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notOpen: return "The preview browser isn't open. Open the Preview tab first."
+        case .notOpen: return "The live preview could not open. Check that this site has a valid live URL."
         case .evaluationFailed(let m): return "Browser script failed: \(m)"
         }
     }
@@ -35,9 +35,30 @@ final class BrowserController: ObservableObject {
 
     var isAvailable: Bool { webView != nil }
 
+    /// Browser tools may be requested while the Preview pane is closed. Ask the
+    /// workspace to reveal it and briefly wait for SwiftUI/WebKit to register
+    /// the live view, so model tools do not fail because of UI presentation.
+    func ensureAvailable() async -> Bool {
+        if isAvailable { return true }
+        NotificationCenter.default.post(name: .requestAgentPreview, object: nil)
+        for _ in 0..<30 {
+            if isAvailable { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return isAvailable
+    }
+
     func register(_ webView: WKWebView) {
-        self.webView = webView
-        self.currentURL = webView.url
+        // `updateNSView` can call this many times during one SwiftUI layout
+        // pass. Publishing an unchanged URL from here re-invalidates that same
+        // view graph and can drive AppKit into a recursive constraint update.
+        // Only publish when the browser or URL has genuinely changed.
+        if self.webView !== webView {
+            self.webView = webView
+        }
+        if currentURL != webView.url {
+            currentURL = webView.url
+        }
     }
 
     // MARK: Primitive: run JS

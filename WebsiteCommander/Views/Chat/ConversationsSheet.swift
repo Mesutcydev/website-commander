@@ -1,15 +1,17 @@
 import SwiftUI
 
-/// Lists saved conversations (scoped to the active site) and lets you load,
-/// delete, or save the current chat.
+/// Lists conversations (scoped to the active site) and lets you open, rename,
+/// or delete one. There is no "save" action: the agent saves every chat as it
+/// happens, so this list is always current.
 struct ConversationsSheet: View {
     @EnvironmentObject var engine: AgentEngine
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var conversations: ConversationStore
     @Environment(\.dismiss) private var dismiss
     @State private var showAll = false
-    @State private var saveTitle = ""
-    @State private var showSave = false
+    @State private var renamingID: UUID?
+    @State private var renameText = ""
+    @FocusState private var renameFocused: Bool
 
     private var rows: [SavedConversation] {
         showAll ? conversations.conversations
@@ -18,25 +20,24 @@ struct ConversationsSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Conversations").font(.title3.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Conversations").font(.title3.weight(.semibold))
+                    Label("Saved automatically", systemImage: "checkmark.icloud")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .labelStyle(.titleAndIcon)
+                }
                 Spacer()
                 Toggle("All sites", isOn: $showAll).toggleStyle(.switch)
-                Button {
-                    showSave = true
-                } label: {
-                    Label("Save current", systemImage: "tray.and.arrow.down.fill")
-                }
-                .buttonStyle(.primarySoft)
-                .disabled(engine.transcript.isEmpty)
             }
             .padding(Theme.Space.l)
             Divider()
 
             if rows.isEmpty {
                 EmptyStateView(systemImage: "bubble.left.and.text.bubble.right",
-                               title: "No saved conversations",
-                               message: "Save a chat to pick up where you left off later.")
+                               title: "No conversations yet",
+                               message: "Start a chat — it is saved as you go, and shows up here.")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 6) {
@@ -55,24 +56,6 @@ struct ConversationsSheet: View {
             .padding(Theme.Space.l)
         }
         .frame(width: 520, height: 520)
-        .popover(isPresented: $showSave, arrowEdge: .top) {
-            VStack(alignment: .leading, spacing: Theme.Space.s) {
-                Text("Save conversation").font(.headline)
-                TextField("Title (optional)", text: $saveTitle)
-                    .textFieldStyle(.roundedBorder)
-                HStack {
-                    Button("Cancel") { showSave = false; saveTitle = "" }
-                    Spacer()
-                    Button("Save") {
-                        engine.saveCurrentConversation(title: saveTitle)
-                        saveTitle = ""; showSave = false
-                    }
-                    .buttonStyle(.primary)
-                }
-            }
-            .padding(Theme.Space.l)
-            .frame(width: 300)
-        }
     }
 
     private func row(_ conv: SavedConversation) -> some View {
@@ -80,18 +63,39 @@ struct ConversationsSheet: View {
             IconTile(systemImage: conv.id == engine.currentConversationID ? "checkmark.bubble.fill" : "bubble.left.fill",
                      tint: Theme.accent, size: 32, gradient: false)
             VStack(alignment: .leading, spacing: 2) {
-                Text(conv.title).font(.callout.weight(.medium)).lineLimit(1)
+                if renamingID == conv.id {
+                    TextField("Title", text: $renameText)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($renameFocused)
+                        .onSubmit { commitRename(conv) }
+                } else {
+                    Text(conv.title).font(.callout.weight(.medium)).lineLimit(1)
+                }
                 Text("\(conv.messages.count) messages · \(conv.updatedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
-            Button {
-                engine.loadConversation(conv)
-                dismiss()
-            } label: {
-                Text("Open").font(.callout.weight(.medium))
+            if renamingID == conv.id {
+                Button("Done") { commitRename(conv) }
+                    .buttonStyle(.primarySoft)
+            } else {
+                Button {
+                    engine.loadConversation(conv)
+                    dismiss()
+                } label: {
+                    Text("Open").font(.callout.weight(.medium))
+                }
+                .buttonStyle(.primarySoft)
+                Button {
+                    renameText = conv.title
+                    renamingID = conv.id
+                    renameFocused = true
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.icon)
+                .help("Rename conversation")
             }
-            .buttonStyle(.primarySoft)
             Button(role: .destructive) {
                 conversations.delete(conv.id)
                 if engine.currentConversationID == conv.id { engine.currentConversationID = nil }
@@ -102,5 +106,15 @@ struct ConversationsSheet: View {
         }
         .padding(Theme.Space.s)
         .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
+    }
+
+    private func commitRename(_ conv: SavedConversation) {
+        if conv.id == engine.currentConversationID {
+            engine.renameCurrentConversation(renameText)
+        } else {
+            conversations.rename(conv.id, to: renameText)
+        }
+        renamingID = nil
+        renameText = ""
     }
 }

@@ -24,7 +24,11 @@ struct OpenAICompatibleProvider: LLMProvider {
     var defaultModel: String { config.defaultModel }
 
     func capabilities(for model: String) -> ModelCapabilities {
-        ModelCapabilities(supportsVision: config.visionModels.contains(model), supportsTools: true)
+        ModelCapabilities(
+            supportsVision: config.visionModels.contains(model),
+            supportsTools: true,
+            supportsReasoning: ModelReasoningSupport.openAICompatible(model)
+        )
     }
 
     func complete(messages: [LLMMessage], tools: [ToolSpec], model: String) async throws -> LLMResponse {
@@ -32,6 +36,7 @@ struct OpenAICompatibleProvider: LLMProvider {
             "model": model,
             "messages": messages.map { Self.messageJSON($0) }
         ]
+        Self.applyThinkingIfSupported(&body, model: model)
         if !tools.isEmpty {
             body["tools"] = tools.map { tool -> [String: Any] in
                 ["type": "function",
@@ -56,13 +61,15 @@ struct OpenAICompatibleProvider: LLMProvider {
 
     func stream(messages: [LLMMessage], tools: [ToolSpec], model: String,
                 onActivity: @escaping (LLMStreamActivity) -> Void,
-                onText: @escaping (String) -> Void) async throws -> LLMResponse {
+                onText: @escaping (String) -> Void,
+                onReasoning: @escaping (String) -> Void) async throws -> LLMResponse {
         var body: [String: Any] = [
             "model": model,
             "stream": true,
             "stream_options": ["include_usage": true],
             "messages": messages.map { Self.messageJSON($0) }
         ]
+        Self.applyThinkingIfSupported(&body, model: model)
         if !tools.isEmpty {
             body["tools"] = tools.map { tool -> [String: Any] in
                 ["type": "function",
@@ -98,6 +105,7 @@ struct OpenAICompatibleProvider: LLMProvider {
         onActivity(.connected)
 
         var content = ""
+        var reasoning = ""
         var toolAcc: [Int: (id: String, name: String, args: String)] = [:]
         var usage: TokenUsage?
 
@@ -114,6 +122,11 @@ struct OpenAICompatibleProvider: LLMProvider {
             }
             guard let choices = obj["choices"] as? [[String: Any]],
                   let delta = choices.first?["delta"] as? [String: Any] else { continue }
+            if let chunk = Self.reasoningChunk(from: delta), !chunk.isEmpty {
+                if reasoning.isEmpty { onActivity(.reasoning) }
+                reasoning += chunk
+                onReasoning(reasoning)
+            }
             if let c = delta["content"] as? String, !c.isEmpty {
                 content += c
                 onText(content)
@@ -140,7 +153,35 @@ struct OpenAICompatibleProvider: LLMProvider {
                                argumentsJSON: e.args.isEmpty ? "{}" : e.args)
         }
         return LLMResponse(content: content.isEmpty ? nil : content,
-                           toolCalls: toolCalls, usage: usage)
+                           toolCalls: toolCalls, usage: usage,
+                           reasoning: reasoning.isEmpty ? nil : reasoning)
+    }
+
+    /// Extract a reasoning delta from OpenAI-compatible payloads.
+    /// DeepSeek uses `reasoning_content`; some gateways use `reasoning`.
+    static func reasoningChunk(from delta: [String: Any]) -> String? {
+        if let s = delta["reasoning_content"] as? String, !s.isEmpty { return s }
+        if let s = delta["reasoning"] as? String, !s.isEmpty { return s }
+        return nil
+    }
+
+    /// Request thinking / reasoning traces when the model is known to support them.
+    /// DeepSeek V4 accepts `thinking: {type: enabled}`; unknown gateways ignore it.
+    static func applyThinkingIfSupported(_ body: inout [String: Any], model: String) {
+        guard ModelReasoningSupport.openAICompatible(model) else { return }
+        let m = model.lowercased()
+        // o-series uses reasoning_effort rather than DeepSeek's thinking toggle.
+        if m.hasPrefix("o1") || m.hasPrefix("o3") || m.hasPrefix("o4") {
+            if body["reasoning_effort"] == nil {
+                body["reasoning_effort"] = "medium"
+            }
+            return
+        }
+        // DeepSeek V4 thinking mode. Other gateways often reject unknown keys,
+        // so only send this for DeepSeek model IDs.
+        if m.contains("deepseek"), body["thinking"] == nil {
+            body["thinking"] = ["type": "enabled"]
+        }
     }
 
     // MARK: JSON mapping
@@ -173,16 +214,24 @@ struct OpenAICompatibleProvider: LLMProvider {
             obj["tool_call_id"] = toolCallID
         }
         if let name = message.name { obj["name"] = name }
+        // DeepSeek V4 (and similar) require reasoning_content to be replayed on
+        // assistant turns that produced tool calls — omitting it yields HTTP 400.
+        if let reasoning = message.reasoning?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !reasoning.isEmpty {
+            obj["reasoning_content"] = reasoning
+        }
         return obj
     }
 
-    private static func parse(_ data: Data) throws -> LLMResponse {
+    static func parse(_ data: Data) throws -> LLMResponse {
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = obj["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any] else {
             throw LLMError.decoding("no choices")
         }
         let content = message["content"] as? String
+        let reasoning = (message["reasoning_content"] as? String)
+            ?? (message["reasoning"] as? String)
         var toolCalls: [LLMToolCall] = []
         if let rawCalls = message["tool_calls"] as? [[String: Any]] {
             for raw in rawCalls {
@@ -200,7 +249,13 @@ struct OpenAICompatibleProvider: LLMProvider {
                 promptTokens: (u["prompt_tokens"] as? Int) ?? 0,
                 completionTokens: (u["completion_tokens"] as? Int) ?? 0)
         }
-        return LLMResponse(content: content, toolCalls: toolCalls, usage: usage)
+        let cleanedReasoning = reasoning?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return LLMResponse(
+            content: content,
+            toolCalls: toolCalls,
+            usage: usage,
+            reasoning: (cleanedReasoning?.isEmpty == false) ? cleanedReasoning : nil
+        )
     }
 
     // MARK: Transport

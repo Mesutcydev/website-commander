@@ -43,6 +43,19 @@ enum ThemeMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Small macOS system sounds used for agent notifications. Keeping the sound
+/// names here makes the palette easy to change without touching any view code.
+enum NotificationSound: String, Codable, CaseIterable, Identifiable {
+    case glass = "Glass"
+    case tink = "Tink"
+    case pop = "Pop"
+    case purr = "Purr"
+    case submarine = "Submarine"
+    case basso = "Basso"
+
+    var id: String { rawValue }
+}
+
 /// The single source of truth for persisted app state: workspaces, the active
 /// selection, provider/model choice, and behavior toggles. Workspaces and
 /// preferences are saved as JSON in Application Support; secrets (API keys,
@@ -61,6 +74,9 @@ final class SettingsStore: ObservableObject {
     @Published var routingStrategy: RoutingStrategy = .code { didSet { save() } }
     @Published var themeMode: ThemeMode = .system { didSet { save() } }
     @Published var hasCompletedOnboarding: Bool = false { didSet { save() } }
+    @Published var notificationSoundsEnabled: Bool = true { didSet { save() } }
+    @Published var completionSound: NotificationSound = .tink { didSet { save() } }
+    @Published var errorSound: NotificationSound = .basso { didSet { save() } }
 
     // Custom OpenAI-compatible provider configuration.
     @Published var customBaseURL: String = "" { didSet { save() } }
@@ -137,6 +153,27 @@ final class SettingsStore: ObservableObject {
             Keychain.set(key, for: "apikey.\(providerID)")
         }
         objectWillChange.send()
+        refreshPairedProviders()
+    }
+
+    /// Providers that have an API key stored, resolved off the main thread for
+    /// the same reason as `readyWorkspaceIDs`: the toolbar's model menu must
+    /// never read the Keychain while it is laying out.
+    @Published private(set) var pairedProviderIDs: Set<String> = []
+
+    func refreshPairedProviders() {
+        let providerIDs = ProviderRegistry.catalog.map(\.id)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var paired = Set<String>()
+            for providerID in providerIDs
+            where !(Keychain.get("apikey.\(providerID)") ?? "").isEmpty {
+                paired.insert(providerID)
+            }
+            DispatchQueue.main.async {
+                guard let self, self.pairedProviderIDs != paired else { return }
+                self.pairedProviderIDs = paired
+            }
+        }
     }
 
     /// The default (legacy) GitHub token, i.e. `credentialID == nil`.
@@ -145,11 +182,58 @@ final class SettingsStore: ObservableObject {
     func setGitHubToken(_ token: String) {
         Keychain.setGitHubToken(token, for: nil)
         objectWillChange.send()
+        refreshReadiness()
     }
 
     /// Token for a specific account (nil = default).
     func token(forCredential id: UUID?) -> String? {
         Keychain.getGitHubToken(id)
+    }
+
+    // MARK: Readiness
+    //
+    // A Keychain read is synchronous and can block indefinitely — macOS puts up
+    // an access-control prompt whenever the app's signature changes, and until
+    // it is answered the calling thread is stuck. A view `body` therefore must
+    // never read the Keychain: doing it during window restoration deadlocks the
+    // main thread before the window is ever shown, and each repeated layout
+    // pass queues another prompt. Readiness is published from a background
+    // probe instead, so views only ever read a plain in-memory set.
+
+    /// Workspaces that have a usable GitHub token, resolved off the main thread.
+    @Published private(set) var readyWorkspaceIDs: Set<UUID> = []
+
+    /// Recomputes `readyWorkspaceIDs`. Cheap to call; safe to call often.
+    func refreshReadiness() {
+        let probes = workspaces.map { ($0.id, $0.githubCredentialID) }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let fallback = Keychain.getGitHubToken(nil) ?? ""
+            var ready = Set<UUID>()
+            for (workspaceID, credentialID) in probes {
+                let specific = credentialID.flatMap { Keychain.getGitHubToken($0) } ?? ""
+                if !specific.isEmpty || !fallback.isEmpty { ready.insert(workspaceID) }
+            }
+            DispatchQueue.main.async {
+                guard let self, self.readyWorkspaceIDs != ready else { return }
+                self.readyWorkspaceIDs = ready
+            }
+        }
+    }
+
+    /// Whether a workspace can talk to GitHub. Non-blocking.
+    func isReady(_ workspace: SiteWorkspace) -> Bool {
+        readyWorkspaceIDs.contains(workspace.id)
+    }
+
+    /// Resolves a workspace's token off the caller's thread. Main-actor code
+    /// (view `task`s, engine steps) must use this rather than the synchronous
+    /// variant, so a Keychain prompt can never freeze the UI.
+    func resolvedGitHubToken(forAsync workspace: SiteWorkspace?) async -> String? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                continuation.resume(returning: self?.resolvedGitHubToken(for: workspace))
+            }
+        }
     }
 
     /// The token to use for a workspace: its assigned account, else the default.
@@ -172,6 +256,7 @@ final class SettingsStore: ObservableObject {
         let credential = GitHubCredential(id: UUID(), label: label, login: login)
         Keychain.setGitHubToken(token, for: credential.id)
         githubAccounts.append(credential)
+        refreshReadiness()
         return credential
     }
 
@@ -182,6 +267,7 @@ final class SettingsStore: ObservableObject {
         for index in workspaces.indices where workspaces[index].githubCredentialID == id {
             workspaces[index].githubCredentialID = nil
         }
+        refreshReadiness()
     }
 
     /// All accounts as options including the implicit default first.
@@ -212,6 +298,9 @@ final class SettingsStore: ObservableObject {
         var localBridgePort: Int
         var preferOnDevice: Bool
         var updateFeedURL: String
+        var notificationSoundsEnabled: Bool
+        var completionSound: NotificationSound
+        var errorSound: NotificationSound
 
         // Backward-compatible decode: older settings files predate some fields
         // (notably githubAccounts). Missing keys fall back to defaults instead of
@@ -235,6 +324,9 @@ final class SettingsStore: ObservableObject {
             localBridgePort = (try? c.decode(Int.self, forKey: .localBridgePort)) ?? 0
             preferOnDevice = (try? c.decode(Bool.self, forKey: .preferOnDevice)) ?? false
             updateFeedURL = (try? c.decode(String.self, forKey: .updateFeedURL)) ?? ""
+            notificationSoundsEnabled = (try? c.decode(Bool.self, forKey: .notificationSoundsEnabled)) ?? true
+            completionSound = (try? c.decode(NotificationSound.self, forKey: .completionSound)) ?? .tink
+            errorSound = (try? c.decode(NotificationSound.self, forKey: .errorSound)) ?? .basso
         }
 
         init(workspaces: [SiteWorkspace], activeWorkspaceID: UUID?, providerID: String, model: String,
@@ -242,7 +334,8 @@ final class SettingsStore: ObservableObject {
              hasCompletedOnboarding: Bool, customBaseURL: String, customModel: String,
              cloudSyncEnabled: Bool, githubAccounts: [GitHubCredential],
              localBridgeEnabled: Bool, localBridgePort: Int, preferOnDevice: Bool,
-             updateFeedURL: String) {
+             updateFeedURL: String, notificationSoundsEnabled: Bool,
+             completionSound: NotificationSound, errorSound: NotificationSound) {
             self.workspaces = workspaces
             self.activeWorkspaceID = activeWorkspaceID
             self.providerID = providerID
@@ -260,10 +353,43 @@ final class SettingsStore: ObservableObject {
             self.localBridgePort = localBridgePort
             self.preferOnDevice = preferOnDevice
             self.updateFeedURL = updateFeedURL
+            self.notificationSoundsEnabled = notificationSoundsEnabled
+            self.completionSound = completionSound
+            self.errorSound = errorSound
         }
     }
 
+    /// True when this process is an XCTest runner. Used to keep unit tests from
+    /// ever writing the user's real Application Support settings.json (a prior
+    /// test that mutated `workspaces` wiped connected sites).
+    private static var isRunningUnderXCTest: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
+    /// The production settings path (no directory creation — safe for guards).
+    static var productionFileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("WebsiteCommander", isDirectory: true)
+            .appendingPathComponent("settings.json")
+    }
+
     private static func defaultFileURL() -> URL {
+        // Explicit override for tests/automation: never touch the real file.
+        if let override = ProcessInfo.processInfo.environment["WC_SETTINGS_DIR"],
+           !override.isEmpty {
+            let dir = URL(fileURLWithPath: override, isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir.appendingPathComponent("settings.json")
+        }
+        // Auto-isolate under XCTest even when a test forgets to redirect fileURL.
+        if isRunningUnderXCTest {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "WebsiteCommander-tests-\(ProcessInfo.processInfo.processIdentifier)",
+                    isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir.appendingPathComponent("settings.json")
+        }
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("WebsiteCommander", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -271,11 +397,14 @@ final class SettingsStore: ObservableObject {
     }
 
     /// Where settings are persisted. Overridable so unit tests can redirect to a
-    /// temp file and never touch the user's real configuration.
+    /// temp file and never touch the user's real configuration. Under XCTest the
+    /// default is already a process-scoped temp path (see `defaultFileURL()`).
     static var fileURL: URL = SettingsStore.defaultFileURL()
 
     init() {
         load()
+        refreshReadiness()
+        refreshPairedProviders()
     }
 
     private func load() {
@@ -298,9 +427,18 @@ final class SettingsStore: ObservableObject {
         localBridgePort = snap.localBridgePort
         preferOnDevice = snap.preferOnDevice
         updateFeedURL = snap.updateFeedURL
+        notificationSoundsEnabled = snap.notificationSoundsEnabled
+        completionSound = snap.completionSound
+        errorSound = snap.errorSound
     }
 
     private func save() {
+        // Belt-and-suspenders: never clobber the real settings file from XCTest,
+        // even if a test points `fileURL` at Application Support by mistake.
+        if Self.isRunningUnderXCTest,
+           Self.fileURL.standardizedFileURL == Self.productionFileURL.standardizedFileURL {
+            return
+        }
         let snap = Snapshot(
             workspaces: workspaces,
             activeWorkspaceID: activeWorkspaceID,
@@ -318,7 +456,10 @@ final class SettingsStore: ObservableObject {
             localBridgeEnabled: localBridgeEnabled,
             localBridgePort: localBridgePort,
             preferOnDevice: preferOnDevice,
-            updateFeedURL: updateFeedURL
+            updateFeedURL: updateFeedURL,
+            notificationSoundsEnabled: notificationSoundsEnabled,
+            completionSound: completionSound,
+            errorSound: errorSound
         )
         guard let data = try? JSONEncoder().encode(snap) else { return }
         try? data.write(to: Self.fileURL, options: .atomic)

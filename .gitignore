@@ -16,3 +16,4 @@ xcuserdata/
 *.p12
 *.pem
 secrets/
+Scripts/.window-id

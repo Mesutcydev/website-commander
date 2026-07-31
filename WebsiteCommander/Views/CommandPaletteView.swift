@@ -7,7 +7,7 @@ struct CommandPaletteView: View {
     @EnvironmentObject var settings: SettingsStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openSettings) private var openSettings
-    @Binding var selection: SidebarItem?
+    @Binding var selection: Destination?
 
     var onNewChat: () -> Void
     var onDebug: () -> Void
@@ -40,9 +40,9 @@ struct CommandPaletteView: View {
             })
         }
         // Navigation
-        for item in SidebarItem.allCases {
+        for item in Destination.allCases {
             list.append(Action(id: "go-\(item.rawValue)", title: "Go to \(item.rawValue)",
-                               subtitle: "Open in sidebar", systemImage: item.icon) {
+                               subtitle: "Switch destination", systemImage: item.icon) {
                 selection = item; dismiss()
             })
         }
@@ -122,15 +122,15 @@ struct CommandPaletteView: View {
                         .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                 } else {
                     Image(systemName: action.systemImage)
-                        .foregroundStyle(selected ? .white : Theme.accent)
+                        .foregroundStyle(selected ? .white : Theme.secondaryText)
                         .frame(width: 30, height: 30)
-                        .background((selected ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Theme.accent.opacity(0.12))),
+                        .background((selected ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Theme.raisedFill)),
                                     in: RoundedRectangle(cornerRadius: 8))
                 }
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(action.title).font(.callout.weight(.medium))
-                Text(action.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(LocalizedStringKey(action.title)).font(.callout.weight(.medium))
+                Text(LocalizedStringKey(action.subtitle)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             if selected {

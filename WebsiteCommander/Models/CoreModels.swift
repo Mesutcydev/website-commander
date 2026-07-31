@@ -12,6 +12,9 @@ enum ChatRole: String, Codable {
 /// A file the user attached to a chat message (an image or any file). Images go
 /// to vision-capable models; text files are inlined into the prompt.
 struct Attachment: Identifiable, Codable, Equatable {
+    static let maximumCount = 5
+    static let maximumImageBytes = 10 * 1024 * 1024
+    static let maximumTextBytes = 1 * 1024 * 1024
     let id: UUID
     var filename: String
     var mimeType: String
@@ -40,6 +43,10 @@ struct Attachment: Identifiable, Codable, Equatable {
         guard isTextual else { return nil }
         return String(data: data, encoding: .utf8)
     }
+
+    var byteLabel: String {
+        ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+    }
 }
 
 /// A single message in the conversation transcript shown in the chat UI.
@@ -49,15 +56,19 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var text: String
     var toolEvents: [ToolEvent]
     var attachments: [Attachment]
+    /// Real provider reasoning / thinking text. Nil when the model did not
+    /// return any — never populated with synthetic content.
+    var reasoning: String?
     var date: Date
 
     init(id: UUID = UUID(), role: ChatRole, text: String, toolEvents: [ToolEvent] = [],
-         attachments: [Attachment] = [], date: Date = Date()) {
+         attachments: [Attachment] = [], reasoning: String? = nil, date: Date = Date()) {
         self.id = id
         self.role = role
         self.text = text
         self.toolEvents = toolEvents
         self.attachments = attachments
+        self.reasoning = reasoning
         self.date = date
     }
 }

@@ -16,13 +16,26 @@ struct LLMMessage: Codable {
     var toolCallID: String?
     var name: String?
     var images: [LLMImage]?
+    /// Provider reasoning / extended-thinking text for this assistant turn.
+    /// Only set when the provider actually returned it — never synthesized.
+    var reasoning: String?
+    /// Opaque Anthropic thinking-block signature required when replaying
+    /// thinking + tool_use turns. Other providers leave this nil.
+    var reasoningSignature: String?
+    /// Anthropic `redacted_thinking.data` payload, when the API redacted the
+    /// thinking block. Must be replayed unmodified with tool rounds.
+    var reasoningRedactedData: String?
 
     static func system(_ t: String) -> LLMMessage { .init(role: "system", content: t) }
     static func user(_ t: String, images: [LLMImage] = []) -> LLMMessage {
         .init(role: "user", content: t, images: images.isEmpty ? nil : images)
     }
-    static func assistant(_ t: String?, calls: [LLMToolCall]? = nil) -> LLMMessage {
-        .init(role: "assistant", content: t, toolCalls: calls)
+    static func assistant(_ t: String?, calls: [LLMToolCall]? = nil,
+                          reasoning: String? = nil, reasoningSignature: String? = nil,
+                          reasoningRedactedData: String? = nil) -> LLMMessage {
+        .init(role: "assistant", content: t, toolCalls: calls,
+              reasoning: reasoning, reasoningSignature: reasoningSignature,
+              reasoningRedactedData: reasoningRedactedData)
     }
     static func tool(_ result: String, id: String, name: String) -> LLMMessage {
         .init(role: "tool", content: result, toolCallID: id, name: name)
@@ -51,6 +64,12 @@ struct LLMResponse {
     var content: String?
     var toolCalls: [LLMToolCall]
     var usage: TokenUsage?
+    /// Real reasoning / thinking text from the provider, if any.
+    var reasoning: String? = nil
+    /// Anthropic thinking-block signature (required when replaying tool turns).
+    var reasoningSignature: String? = nil
+    /// Anthropic redacted thinking payload (replayed with tool turns).
+    var reasoningRedactedData: String? = nil
 }
 
 /// Non-visible progress from a streaming provider, used to keep the UI honest
@@ -79,9 +98,56 @@ enum LLMError: LocalizedError {
 struct ModelCapabilities: Equatable {
     var supportsVision: Bool
     var supportsTools: Bool
+    /// Whether we should request / expect provider reasoning for this model.
+    var supportsReasoning: Bool
 
-    static let textOnly = ModelCapabilities(supportsVision: false, supportsTools: true)
-    static let vision = ModelCapabilities(supportsVision: true, supportsTools: true)
+    static let textOnly = ModelCapabilities(supportsVision: false, supportsTools: true, supportsReasoning: false)
+    static let vision = ModelCapabilities(supportsVision: true, supportsTools: true, supportsReasoning: false)
+
+    static func vision(reasoning: Bool) -> ModelCapabilities {
+        ModelCapabilities(supportsVision: true, supportsTools: true, supportsReasoning: reasoning)
+    }
+}
+
+/// Heuristics for models known to return (or accept requests for) reasoning /
+/// extended-thinking content. Used only to enable provider-side request flags;
+/// the UI still shows reasoning only when real text arrives.
+enum ModelReasoningSupport {
+    static func anthropic(_ model: String) -> Bool {
+        let m = model.lowercased()
+        return m.contains("sonnet-4")
+            || m.contains("opus-4")
+            || m.contains("3-7-sonnet")
+            || m.contains("claude-opus")
+            || m.contains("claude-sonnet-4")
+    }
+
+    static func gemini(_ model: String) -> Bool {
+        let m = model.lowercased()
+        return m.contains("gemini-2.5") || m.contains("gemini-3")
+    }
+
+    /// OpenAI-compatible endpoints that stream `reasoning_content` / `reasoning`
+    /// (DeepSeek reasoner / V4 thinking, o-series when exposed, MiniMax, etc.).
+    static func openAICompatible(_ model: String) -> Bool {
+        let m = model.lowercased()
+        if m.contains("deepseek") {
+            // V4 Flash/Pro both support thinking mode; also legacy reasoner IDs.
+            if m.contains("v4") || m.contains("reasoner") || m.contains("r1")
+                || m.contains("v3.2") || m.contains("thinking") {
+                return true
+            }
+        }
+        if m.hasPrefix("o1") || m.hasPrefix("o3") || m.hasPrefix("o4") { return true }
+        if m.contains("reasoner") || m.contains("thinking") { return true }
+        if m.contains("qwq") || (m.contains("qwen") && m.contains("think")) { return true }
+        // MiniMax M2/M3 and Kimi thinking variants often expose reasoning_content.
+        if m.contains("minimax") && (m.contains("m2") || m.contains("m3") || m.contains("thinking")) {
+            return true
+        }
+        if m.contains("kimi") && (m.contains("thinking") || m.contains("k2")) { return true }
+        return false
+    }
 }
 
 // MARK: - The pluggable protocol
@@ -94,13 +160,14 @@ protocol LLMProvider {
     var defaultModel: String { get }
     func capabilities(for model: String) -> ModelCapabilities
     func complete(messages: [LLMMessage], tools: [ToolSpec], model: String) async throws -> LLMResponse
-    /// Streaming variant. `onText` is called with the CUMULATIVE assistant text so
+    /// Streaming variant. `onText` / `onReasoning` receive CUMULATIVE text so
     /// far (the view replaces, not appends); `onActivity` reports non-visible
-    /// progress. Returns the final response (text + tool calls + usage).
+    /// progress. Returns the final response (text + reasoning + tool calls + usage).
     /// Providers without SSE keep the default, which falls back to `complete`.
     func stream(messages: [LLMMessage], tools: [ToolSpec], model: String,
                 onActivity: @escaping (LLMStreamActivity) -> Void,
-                onText: @escaping (String) -> Void) async throws -> LLMResponse
+                onText: @escaping (String) -> Void,
+                onReasoning: @escaping (String) -> Void) async throws -> LLMResponse
 }
 
 extension LLMProvider {
@@ -109,9 +176,14 @@ extension LLMProvider {
     /// Default: no streaming — run the blocking call and emit the whole reply once.
     func stream(messages: [LLMMessage], tools: [ToolSpec], model: String,
                 onActivity: @escaping (LLMStreamActivity) -> Void,
-                onText: @escaping (String) -> Void) async throws -> LLMResponse {
+                onText: @escaping (String) -> Void,
+                onReasoning: @escaping (String) -> Void) async throws -> LLMResponse {
         onActivity(.connected)
         let response = try await complete(messages: messages, tools: tools, model: model)
+        if let reasoning = response.reasoning, !reasoning.isEmpty {
+            onActivity(.reasoning)
+            onReasoning(reasoning)
+        }
         if let content = response.content, !content.isEmpty { onText(content) }
         return response
     }

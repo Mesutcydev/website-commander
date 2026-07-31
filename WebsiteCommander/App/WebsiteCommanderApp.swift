@@ -46,7 +46,9 @@ struct WebsiteCommanderApp: App {
                 .environmentObject(bridge)
                 .environmentObject(conversations)
                 .environmentObject(updater)
-                .frame(minWidth: 1080, minHeight: 700)
+                // Low enough that the bar's narrowest density tier is a real
+                // state a user can reach, not dead code.
+                .frame(minWidth: 760, minHeight: 620)
                 .preferredColorScheme(settings.themeMode.colorScheme)
                 .tint(Theme.accent)
                 .task {
@@ -61,8 +63,11 @@ struct WebsiteCommanderApp: App {
                     else { bridge.stop() }
                 }
         }
-        .windowStyle(.automatic)
-        .windowToolbarStyle(.unified)
+        // The application bar *is* the titlebar band: hiding the native one is
+        // what lets a 68pt bar be the app's only chrome instead of sitting under
+        // an empty 28pt strip. The bar reserves leading room for the traffic
+        // lights and makes its own background drag the window.
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Chat") { engine.newChat() }
@@ -88,31 +93,17 @@ struct WebsiteCommanderApp: App {
                 Button("Debug Current Site") { NotificationCenter.default.post(name: .requestDebug, object: nil) }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
             }
-            CommandMenu("View") {
-                ForEach(ThemeMode.allCases) { mode in
-                    Button {
-                        settings.themeMode = mode
-                    } label: {
-                        Label(mode.rawValue, systemImage: mode.icon)
-                    }
-                    .disabled(settings.themeMode == mode)
-                }
-            }
         }
 
         Settings {
             SettingsView()
                 .environmentObject(settings)
                 .environmentObject(engine)
+                .environmentObject(cloudSync)
+                .environmentObject(bridge)
+                .environmentObject(updater)
                 .frame(width: 620, height: 560)
+                .preferredColorScheme(settings.themeMode.colorScheme)
         }
     }
-}
-
-extension Notification.Name {
-    static let openInVSCode = Notification.Name("openInVSCode")
-    static let refreshPreview = Notification.Name("refreshPreview")
-    static let requestAddSite = Notification.Name("requestAddSite")
-    static let requestDebug = Notification.Name("requestDebug")
-    static let requestPalette = Notification.Name("requestPalette")
 }

@@ -143,6 +143,9 @@ enum Runner {
 
         let browser = BrowserController()
         let engine = AgentEngine(settings: settings, browserController: browser)
+        // Headless runs are conversations too: autosave them into the same
+        // store the app reads, so nothing is lost when the process exits.
+        engine.conversationStore = ConversationStore()
         let approve = flags["approve"] != nil
         let result = await engine.runHeadless(prompt, autoApprove: approve)
 

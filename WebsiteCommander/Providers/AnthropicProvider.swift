@@ -2,7 +2,7 @@ import Foundation
 
 /// Anthropic (Claude) via the Messages API. Translates the uniform OpenAI-style
 /// `LLMMessage` wire format into Anthropic's content-block structure (text,
-/// image, tool_use, tool_result).
+/// image, tool_use, tool_result, thinking).
 struct AnthropicProvider: LLMProvider {
 
     let apiKey: String
@@ -13,7 +13,9 @@ struct AnthropicProvider: LLMProvider {
     }
     var defaultModel: String { "claude-sonnet-4-5" }
 
-    func capabilities(for model: String) -> ModelCapabilities { .vision }
+    func capabilities(for model: String) -> ModelCapabilities {
+        .vision(reasoning: ModelReasoningSupport.anthropic(model))
+    }
 
     private func requestBody(messages: [LLMMessage], tools: [ToolSpec], model: String) throws -> [String: Any] {
         guard !apiKey.isEmpty else { throw LLMError.noKey(displayName) }
@@ -49,6 +51,20 @@ struct AnthropicProvider: LLMProvider {
             case "assistant":
                 flushToolResults()
                 var blocks: [[String: Any]] = []
+                // Anthropic requires thinking (+ signature) — or redacted_thinking —
+                // before tool_use when replaying an extended-thinking tool turn.
+                if let redacted = message.reasoningRedactedData, !redacted.isEmpty {
+                    blocks.append(["type": "redacted_thinking", "data": redacted])
+                } else if let reasoning = message.reasoning, !reasoning.isEmpty {
+                    var thinking: [String: Any] = [
+                        "type": "thinking",
+                        "thinking": reasoning
+                    ]
+                    if let signature = message.reasoningSignature, !signature.isEmpty {
+                        thinking["signature"] = signature
+                    }
+                    blocks.append(thinking)
+                }
                 if let text = message.content, !text.isEmpty {
                     blocks.append(["type": "text", "text": text])
                 }
@@ -78,11 +94,17 @@ struct AnthropicProvider: LLMProvider {
         }
         flushToolResults()
 
+        let thinkingEnabled = ModelReasoningSupport.anthropic(model)
+        // Thinking budget must be less than max_tokens.
+        let maxTokens = thinkingEnabled ? 16_000 : 8192
         var body: [String: Any] = [
             "model": model,
-            "max_tokens": 8192,
+            "max_tokens": maxTokens,
             "messages": anthropicMessages
         ]
+        if thinkingEnabled {
+            body["thinking"] = ["type": "enabled", "budget_tokens": 8_000]
+        }
         if !system.isEmpty { body["system"] = system }
         if !tools.isEmpty {
             body["tools"] = tools.map { tool -> [String: Any] in
@@ -108,7 +130,8 @@ struct AnthropicProvider: LLMProvider {
 
     func stream(messages: [LLMMessage], tools: [ToolSpec], model: String,
                 onActivity: @escaping (LLMStreamActivity) -> Void,
-                onText: @escaping (String) -> Void) async throws -> LLMResponse {
+                onText: @escaping (String) -> Void,
+                onReasoning: @escaping (String) -> Void) async throws -> LLMResponse {
         var body = try requestBody(messages: messages, tools: tools, model: model)
         body["stream"] = true
         let headers = [
@@ -136,6 +159,9 @@ struct AnthropicProvider: LLMProvider {
         onActivity(.connected)
 
         var content = ""
+        var reasoning = ""
+        var reasoningSignature = ""
+        var reasoningRedactedData = ""
         var toolAcc: [Int: (id: String, name: String, args: String)] = [:]
         var usage = TokenUsage(promptTokens: 0, completionTokens: 0)
         var eventType = ""
@@ -157,18 +183,36 @@ struct AnthropicProvider: LLMProvider {
                     usage.promptTokens = (u["input_tokens"] as? Int) ?? 0
                 }
             case "content_block_start":
-                if let cb = obj["content_block"] as? [String: Any],
-                   (cb["type"] as? String) == "tool_use" {
-                    toolAcc[index] = (id: (cb["id"] as? String) ?? UUID().uuidString,
-                                      name: (cb["name"] as? String) ?? "", args: "")
-                    onActivity(.toolCall)
+                if let cb = obj["content_block"] as? [String: Any] {
+                    let type = cb["type"] as? String
+                    if type == "tool_use" {
+                        toolAcc[index] = (id: (cb["id"] as? String) ?? UUID().uuidString,
+                                          name: (cb["name"] as? String) ?? "", args: "")
+                        onActivity(.toolCall)
+                    } else if type == "thinking" {
+                        onActivity(.reasoning)
+                        if let t = cb["thinking"] as? String, !t.isEmpty {
+                            reasoning += t
+                            onReasoning(reasoning)
+                        }
+                    } else if type == "redacted_thinking" {
+                        onActivity(.reasoning)
+                        if let d = cb["data"] as? String { reasoningRedactedData += d }
+                    }
                 }
             case "content_block_delta":
                 if let delta = obj["delta"] as? [String: Any] {
-                    if (delta["type"] as? String) == "text_delta", let t = delta["text"] as? String {
+                    let dtype = delta["type"] as? String
+                    if dtype == "text_delta", let t = delta["text"] as? String {
                         content += t
                         onText(content)
-                    } else if (delta["type"] as? String) == "input_json_delta",
+                    } else if dtype == "thinking_delta", let t = delta["thinking"] as? String {
+                        if reasoning.isEmpty { onActivity(.reasoning) }
+                        reasoning += t
+                        onReasoning(reasoning)
+                    } else if dtype == "signature_delta", let s = delta["signature"] as? String {
+                        reasoningSignature += s
+                    } else if dtype == "input_json_delta",
                               let pj = delta["partial_json"] as? String, index >= 0 {
                         toolAcc[index]?.args.append(pj)
                     }
@@ -190,7 +234,10 @@ struct AnthropicProvider: LLMProvider {
         let usedUsage: TokenUsage? =
             (usage.promptTokens == 0 && usage.completionTokens == 0) ? nil : usage
         return LLMResponse(content: content.isEmpty ? nil : content,
-                           toolCalls: toolCalls, usage: usedUsage)
+                           toolCalls: toolCalls, usage: usedUsage,
+                           reasoning: reasoning.isEmpty ? nil : reasoning,
+                           reasoningSignature: reasoningSignature.isEmpty ? nil : reasoningSignature,
+                           reasoningRedactedData: reasoningRedactedData.isEmpty ? nil : reasoningRedactedData)
     }
 
     private func parse(_ data: Data) throws -> LLMResponse {
@@ -199,11 +246,23 @@ struct AnthropicProvider: LLMProvider {
             throw LLMError.decoding("no content blocks")
         }
         var text = ""
+        var reasoning = ""
+        var reasoningSignature: String?
+        var reasoningRedactedData: String?
         var toolCalls: [LLMToolCall] = []
         for block in blocks {
             switch block["type"] as? String {
             case "text":
                 text += (block["text"] as? String) ?? ""
+            case "thinking":
+                reasoning += (block["thinking"] as? String) ?? ""
+                if let sig = block["signature"] as? String, !sig.isEmpty {
+                    reasoningSignature = sig
+                }
+            case "redacted_thinking":
+                if let d = block["data"] as? String, !d.isEmpty {
+                    reasoningRedactedData = (reasoningRedactedData ?? "") + d
+                }
             case "tool_use":
                 let input = block["input"] ?? [String: Any]()
                 let argsData = (try? JSONSerialization.data(withJSONObject: input)) ?? Data("{}".utf8)
@@ -221,6 +280,9 @@ struct AnthropicProvider: LLMProvider {
                 promptTokens: (u["input_tokens"] as? Int) ?? 0,
                 completionTokens: (u["output_tokens"] as? Int) ?? 0)
         }
-        return LLMResponse(content: text.isEmpty ? nil : text, toolCalls: toolCalls, usage: usage)
+        return LLMResponse(content: text.isEmpty ? nil : text, toolCalls: toolCalls, usage: usage,
+                           reasoning: reasoning.isEmpty ? nil : reasoning,
+                           reasoningSignature: reasoningSignature,
+                           reasoningRedactedData: reasoningRedactedData)
     }
 }

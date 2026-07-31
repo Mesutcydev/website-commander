@@ -11,6 +11,15 @@ struct ProviderInfo: Identifiable {
     let models: [String]
     let defaultModel: String
     let supportsVision: Bool
+
+    func modelLabel(_ model: String) -> String {
+        guard id == "deepseek" else { return model }
+        switch model {
+        case "deepseek-v4-pro": return "V4 Pro"
+        case "deepseek-v4-flash": return "V4 Flash"
+        default: return model
+        }
+    }
 }
 
 /// Knows every provider and how to build the active one from settings.
@@ -32,8 +41,34 @@ enum ProviderRegistry {
                      defaultModel: "gemini-2.5-pro", supportsVision: true),
         ProviderInfo(id: "deepseek", displayName: "DeepSeek", icon: "fish.fill",
                      keyLabel: "DeepSeek API Key", keySourceURL: "https://platform.deepseek.com/api_keys",
-                     models: ["deepseek-chat", "deepseek-reasoner"], defaultModel: "deepseek-chat",
+                     models: ["deepseek-v4-pro", "deepseek-v4-flash"], defaultModel: "deepseek-v4-flash",
                      supportsVision: false),
+        ProviderInfo(id: "alibaba-token", displayName: "Alibaba Token Plan", icon: "cloud.fill",
+                     keyLabel: "Token Plan API Key (sk-sp-…)",
+                     keySourceURL: "https://bailian.console.aliyun.com/",
+                     models: ["qwen3.8-max-preview", "qwen3.7-max", "qwen3.7-plus",
+                              "qwen3.6-flash", "glm-5.2", "deepseek-v4-pro"],
+                     defaultModel: "qwen3.7-plus", supportsVision: true),
+        ProviderInfo(id: "opencode-go", displayName: "OpenCode Go", icon: "paperplane.fill",
+                     keyLabel: "OpenCode Go API Key", keySourceURL: "https://opencode.ai/auth",
+                     models: ["minimax-m3", "minimax-m2.7", "minimax-m2.5",
+                              "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5",
+                              "glm-5.2", "glm-5.1", "glm-5",
+                              "deepseek-v4-pro", "deepseek-v4-flash",
+                              "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.5-plus",
+                              "mimo-v2-pro", "mimo-v2-omni", "mimo-v2.5-pro", "mimo-v2.5",
+                              "hy3", "hy3-preview", "grok-4.5"],
+                     defaultModel: "kimi-k2.7-code", supportsVision: false),
+        ProviderInfo(id: "opencode-zen", displayName: "OpenCode Zen", icon: "sparkles",
+                     keyLabel: "OpenCode Zen API Key", keySourceURL: "https://opencode.ai/auth",
+                     models: ["kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5",
+                              "deepseek-v4-pro", "deepseek-v4-flash",
+                              "minimax-m3", "minimax-m2.7", "minimax-m2.5",
+                              "glm-5.2", "glm-5.1", "glm-5", "grok-4.5",
+                              "grok-build-0.1", "big-pickle", "mimo-v2.5-free",
+                              "north-mini-code-free", "nemotron-3-ultra-free",
+                              "deepseek-v4-flash-free"],
+                     defaultModel: "kimi-k2.7-code", supportsVision: false),
         ProviderInfo(id: "grok", displayName: "Grok", icon: "bolt.fill",
                      keyLabel: "xAI API Key", keySourceURL: "https://console.x.ai",
                      models: ["grok-3", "grok-2-latest"], defaultModel: "grok-3",
@@ -62,7 +97,8 @@ enum ProviderRegistry {
     /// Build a concrete provider for `id`, reading its key from settings.
     /// Returns nil when a required key is missing.
     static func makeProvider(id: String, settings: SettingsStore) -> LLMProvider? {
-        let key = settings.apiKey(for: id) ?? ""
+        let key = (settings.apiKey(for: id) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         switch id {
         case "anthropic":
             return AnthropicProvider(apiKey: key)
@@ -94,14 +130,26 @@ enum ProviderRegistry {
             switch id {
             case "openai":   baseURL = "https://api.openai.com/v1"
             case "deepseek": baseURL = "https://api.deepseek.com/v1"
+            case "alibaba-token":
+                baseURL = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+            case "opencode-go":
+                baseURL = "https://opencode.ai/zen/go/v1"
+            case "opencode-zen":
+                baseURL = "https://opencode.ai/zen/v1"
             case "grok":     baseURL = "https://api.x.ai/v1"
             case "mistral":  baseURL = "https://api.mistral.ai/v1"
             default:         baseURL = ""
             }
+            let visionModels: Set<String>
+            if id == "alibaba-token" {
+                visionModels = ["qwen3.8-max-preview", "qwen3.7-plus", "qwen3.6-flash"]
+            } else {
+                visionModels = info.supportsVision ? Set(info.models) : []
+            }
             return OpenAICompatibleProvider(config: .init(
                 id: id, displayName: info.displayName, baseURL: baseURL, apiKey: key,
                 models: info.models, defaultModel: info.defaultModel,
-                visionModels: info.supportsVision ? Set(info.models) : []))
+                visionModels: visionModels))
         }
     }
 
@@ -115,9 +163,14 @@ enum ProviderRegistry {
     static func routedProviderID(_ settings: SettingsStore) -> String {
         let order: [String]
         switch settings.routingStrategy {
-        case .budget:  order = ["deepseek", "gemini", "openai", "copilot", "mistral"]
-        case .quality: order = ["anthropic", "openai", "copilot", "gemini", "grok"]
-        case .code:    order = ["copilot", "anthropic", "openai", "gemini", "deepseek"]
+        case .budget:
+            order = ["opencode-go", "deepseek", "gemini", "openai", "copilot", "mistral"]
+        case .quality:
+            order = ["anthropic", "openai", "opencode-zen", "alibaba-token",
+                     "copilot", "gemini", "grok"]
+        case .code:
+            order = ["opencode-zen", "opencode-go", "alibaba-token",
+                     "copilot", "anthropic", "openai", "gemini", "deepseek"]
         }
         let available = order.filter { !(settings.apiKey(for: $0) ?? "").isEmpty }
         return available.first ?? settings.providerID

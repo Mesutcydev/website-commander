@@ -211,8 +211,10 @@ struct ProviderSettingsTab: View {
 
             Section("Model") {
                 Picker("Model", selection: $settings.model) {
-                    Text("Default (\(info?.defaultModel ?? "auto"))").tag("")
-                    ForEach(modelList, id: \.self) { Text($0).tag($0) }
+                    Text("Default (\(defaultModelLabel))").tag("")
+                    ForEach(modelList, id: \.self) { model in
+                        Text(info?.modelLabel(model) ?? model).tag(model)
+                    }
                 }
             }
 
@@ -266,6 +268,11 @@ struct ProviderSettingsTab: View {
         }
         return info?.models ?? []
     }
+
+    private var defaultModelLabel: String {
+        guard let info else { return "auto" }
+        return info.modelLabel(info.defaultModel)
+    }
 }
 
 /// A selectable visual provider chip.
@@ -283,7 +290,7 @@ private struct ProviderChip: View {
                             .fill(isSelected ? Color.white : Color.primary)
                     } else {
                         Image(systemName: provider.icon)
-                            .foregroundStyle(isSelected ? .white : Theme.accent)
+                            .foregroundStyle(isSelected ? .white : Theme.secondaryText)
                     }
                 }
                 .frame(width: 18, height: 18)
@@ -317,10 +324,37 @@ struct BehaviorSettingsTab: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Appearance") {
-                Picker("Theme", selection: $settings.themeMode) {
-                    ForEach(ThemeMode.allCases) { Text($0.rawValue).tag($0) }
+                Picker("Appearance", selection: $settings.themeMode) {
+                    ForEach(ThemeMode.allCases) { mode in
+                        Label(mode.rawValue, systemImage: mode.icon).tag(mode)
+                    }
                 }
                 .pickerStyle(.segmented)
+
+                Text(settings.themeMode == .system
+                     ? "Follows your Mac appearance automatically."
+                     : settings.themeMode == .light
+                        ? "A bright, high-contrast workspace for daylight use."
+                        : "A low-luminance workspace for dim environments.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.secondaryText)
+            }
+            Section {
+                Toggle("Play notification sounds", isOn: $settings.notificationSoundsEnabled)
+                if settings.notificationSoundsEnabled {
+                    soundPicker(
+                        title: "Task completed",
+                        selection: $settings.completionSound
+                    )
+                    soundPicker(
+                        title: "Task failed",
+                        selection: $settings.errorSound
+                    )
+                }
+            } header: {
+                Text("Sounds")
+            } footer: {
+                Text("Short system sounds play when an agent task finishes or needs attention.")
             }
             Section {
                 Toggle("Sync workspaces & preferences via iCloud", isOn: $settings.cloudSyncEnabled)
@@ -385,6 +419,25 @@ struct BehaviorSettingsTab: View {
         .formStyle(.grouped)
         .padding(Theme.Space.l)
     }
+
+    private func soundPicker(title: LocalizedStringKey,
+                             selection: Binding<NotificationSound>) -> some View {
+        HStack {
+            Picker(title, selection: selection) {
+                ForEach(NotificationSound.allCases) { sound in
+                    Text(sound.rawValue).tag(sound)
+                }
+            }
+            Button {
+                AudioNotificationPlayer.play(selection.wrappedValue)
+            } label: {
+                Image(systemName: "speaker.wave.2.fill")
+            }
+            .buttonStyle(.borderless)
+            .help("Preview sound")
+            .accessibilityLabel("Preview \(selection.wrappedValue.rawValue) sound")
+        }
+    }
 }
 
 // MARK: - About tab
@@ -395,7 +448,7 @@ struct AboutSettingsTab: View {
 
     var body: some View {
         VStack(spacing: Theme.Space.m) {
-            IconTile(systemImage: "square.grid.2x2.fill", size: 64)
+            BrandIllustration(size: 72)
             Text("Website Commander").font(.title2.weight(.bold))
             Text("Version \(UpdateChecker.currentVersion)").font(.callout).foregroundStyle(.secondary)
             Text("The open-source, Mac-native website agent. Edit your sites with plain English, review every change, and ship.")

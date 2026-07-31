@@ -7,6 +7,59 @@ import SwiftUI
 /// avoid the network and the main actor.
 final class WebsiteCommanderTests: XCTestCase {
 
+    // MARK: - Agent workspace layout + activity grouping
+
+    func testWorkspaceDefaultSplitUsesThirtyEightPercent() {
+        XCTAssertEqual(WorkspaceLayout.defaultAgentWidth(in: 1200), 456, accuracy: 0.01)
+    }
+
+    func testWorkspaceSplitRespectsBothPaneMinimums() {
+        XCTAssertEqual(
+            WorkspaceLayout.clampedAgentWidth(100, in: 1100),
+            WorkspaceLayout.agentMinimum
+        )
+        XCTAssertEqual(
+            WorkspaceLayout.clampedAgentWidth(900, in: 1100),
+            1100 - WorkspaceLayout.previewMinimum - WorkspaceLayout.dividerWidth
+        )
+    }
+
+    func testToolEventsCollapseIntoSemanticGroupsAndPreserveFailures() {
+        let events = [
+            ToolEvent(name: "read_file", summary: "Read a.swift", status: .success),
+            ToolEvent(name: "read_file", summary: "Read b.swift", status: .failure),
+            ToolEvent(name: "write_file", summary: "Edit c.swift", status: .success)
+        ]
+        let groups = ToolActivityGroup.group(events)
+        XCTAssertEqual(groups.map(\.title), ["Reading files", "Editing files"])
+        XCTAssertEqual(groups.first?.events.count, 2)
+        XCTAssertEqual(groups.first?.hasFailure, true)
+    }
+
+    func testAgentRunBudgetSupportsRealInspectEditVerifyWork() {
+        XCTAssertGreaterThanOrEqual(AgentRunBudget.maximumRounds, 20)
+        XCTAssertGreaterThan(AgentRunBudget.maximumOperations, AgentRunBudget.maximumRounds)
+    }
+
+    func testAgentRunBudgetDetectsIdenticalCalls() {
+        let call = LLMToolCall(id: "one", name: "read_file", argumentsJSON: #"{"path":"index.html"}"#)
+        let sameOperation = LLMToolCall(id: "two", name: "read_file", argumentsJSON: #"{"path":"index.html"}"#)
+        XCTAssertEqual(AgentRunBudget.callSignature(call), AgentRunBudget.callSignature(sameOperation))
+    }
+
+    func testTextAttachmentIsDecodedAndSizeLimited() {
+        let attachment = Attachment(
+            filename: "notes.md",
+            mimeType: "text/markdown",
+            data: Data("# Instructions".utf8)
+        )
+        XCTAssertTrue(attachment.isTextual)
+        XCTAssertFalse(attachment.isImage)
+        XCTAssertEqual(attachment.asText, "# Instructions")
+        XCTAssertEqual(Attachment.maximumCount, 5)
+        XCTAssertLessThan(Attachment.maximumTextBytes, Attachment.maximumImageBytes)
+    }
+
     // MARK: - Remote parsing (CLI auto-detect + multi-account)
 
     func testParseRemoteSSH() {
@@ -277,6 +330,89 @@ final class WebsiteCommanderTests: XCTestCase {
         XCTAssertNil(store.save(title: "x", messages: [], workspaceID: wsID))
     }
 
+    /// Autosave hands the store an id for a conversation the file has never
+    /// seen (fresh install, pruned file). That id must be honoured, or a live
+    /// chat forks a new row on every write.
+    @MainActor
+    func testConversationStoreHonoursRequestedIDAndKeepsTitles() {
+        let original = ConversationStore.fileURL
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("wc-conv-\(UUID().uuidString).json")
+        ConversationStore.fileURL = tmp
+        defer {
+            ConversationStore.fileURL = original
+            try? FileManager.default.removeItem(at: tmp)
+        }
+
+        let store = ConversationStore()
+        let wsID = UUID()
+        let id = UUID()
+        let saved = store.save(title: nil, messages: [ChatMessage(role: .user, text: "first")],
+                               workspaceID: wsID, id: id)
+        XCTAssertEqual(saved?.id, id)
+
+        // A later autosave with no title must not clobber a user's rename.
+        XCTAssertTrue(store.rename(id, to: "My chat"))
+        let updated = store.save(title: nil,
+                                 messages: [ChatMessage(role: .user, text: "first"),
+                                            ChatMessage(role: .assistant, text: "second")],
+                                 workspaceID: wsID, id: id)
+        XCTAssertEqual(updated?.title, "My chat")
+        XCTAssertEqual(updated?.messages.count, 2)
+        XCTAssertEqual(store.conversations.count, 1, "autosave must update in place, not fork")
+    }
+
+    /// The user never presses "save": appending to the transcript is enough for
+    /// the conversation to survive a relaunch.
+    @MainActor
+    func testEngineAutosavesTranscriptWithoutExplicitSave() async {
+        let originalConv = ConversationStore.fileURL
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("wc-conv-\(UUID().uuidString).json")
+        ConversationStore.fileURL = tmp
+        defer {
+            ConversationStore.fileURL = originalConv
+            try? FileManager.default.removeItem(at: tmp)
+        }
+
+        let settings = SettingsStore()   // XCTest-isolated; never the real file
+        let workspace = SiteWorkspace(name: "Autosave Test", gitOwner: "octocat",
+                                      gitRepo: "hello-world", gitBranch: "main",
+                                      techStack: .vanillaHTML, deployment: .githubPages,
+                                      defaultModel: "")
+        settings.workspaces = [workspace]
+        settings.activeWorkspaceID = workspace.id
+
+        let engine = AgentEngine(settings: settings, browserController: BrowserController())
+        engine.conversationStore = ConversationStore()
+
+        engine.transcript.append(ChatMessage(role: .user, text: "make the hero blue"))
+        engine.transcript.append(ChatMessage(role: .assistant, text: "Staged one change."))
+
+        // Debounced write lands on its own, with no user action.
+        try? await Task.sleep(for: .milliseconds(900))
+
+        let conversationID = engine.currentConversationID
+        XCTAssertNotNil(conversationID, "a live chat must get an id without an explicit save")
+
+        // Simulate a relaunch: a brand-new store reads what autosave wrote.
+        let relaunched = ConversationStore()
+        let restored = relaunched.list(forWorkspaceID: workspace.id)
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertEqual(restored.first?.id, conversationID)
+        XCTAssertEqual(restored.first?.messages.count, 2)
+        XCTAssertEqual(restored.first?.title, "make the hero blue")
+
+        // Starting a new chat flushes the old one and keeps it on disk.
+        engine.transcript.append(ChatMessage(role: .user, text: "and the footer"))
+        engine.newChat()
+        XCTAssertNil(engine.currentConversationID)
+        let afterNewChat = ConversationStore().list(forWorkspaceID: workspace.id)
+        XCTAssertEqual(afterNewChat.count, 1, "new chat must not fork a duplicate row")
+        XCTAssertEqual(afterNewChat.first?.messages.count, 3,
+                       "the last message before New Chat must be persisted")
+    }
+
     // MARK: - Syntax highlighter (diff view)
 
     func testHighlightLangFromPath() {
@@ -306,6 +442,26 @@ final class WebsiteCommanderTests: XCTestCase {
         XCTAssertEqual(toks, [SyntaxHighlight.Token(text: "hello world", kind: .plain)])
     }
 
+    // MARK: - Provider catalogs
+
+    @MainActor
+    func testDeepSeekUsesCurrentV4Models() {
+        let provider = ProviderRegistry.info(for: "deepseek")
+        XCTAssertEqual(provider?.models, ["deepseek-v4-pro", "deepseek-v4-flash"])
+        XCTAssertEqual(provider?.defaultModel, "deepseek-v4-flash")
+        XCTAssertEqual(provider?.modelLabel("deepseek-v4-pro"), "V4 Pro")
+    }
+
+    @MainActor
+    func testOpenCodeGoCatalogIsComplete() {
+        let models = ProviderRegistry.info(for: "opencode-go")?.models ?? []
+        XCTAssertEqual(models.count, 23)
+        XCTAssertTrue(models.contains("qwen3.7-plus"))
+        XCTAssertTrue(models.contains("mimo-v2.5-pro"))
+        XCTAssertTrue(models.contains("hy3-preview"))
+        XCTAssertTrue(models.contains("deepseek-v4-pro"))
+    }
+
     // MARK: - Update checker (version compare + feed safety)
 
     func testVersionCompare() {
@@ -330,5 +486,108 @@ final class WebsiteCommanderTests: XCTestCase {
         await checker.check(feedURL: "http://example.com/feed.json")   // external http = rejected
         XCTAssertNotNil(checker.lastError)
         XCTAssertNil(checker.available)
+    }
+
+    // MARK: - Model reasoning capture
+
+    func testReasoningSupportDetectsKnownModels() {
+        XCTAssertTrue(ModelReasoningSupport.anthropic("claude-sonnet-4-5"))
+        XCTAssertTrue(ModelReasoningSupport.anthropic("claude-opus-4-1"))
+        XCTAssertFalse(ModelReasoningSupport.anthropic("claude-3-5-haiku-latest"))
+        XCTAssertTrue(ModelReasoningSupport.gemini("gemini-2.5-pro"))
+        XCTAssertFalse(ModelReasoningSupport.gemini("gemini-2.0-flash"))
+        XCTAssertTrue(ModelReasoningSupport.openAICompatible("deepseek-reasoner"))
+        XCTAssertTrue(ModelReasoningSupport.openAICompatible("deepseek-v4-pro"))
+        XCTAssertTrue(ModelReasoningSupport.openAICompatible("o3-mini"))
+        XCTAssertFalse(ModelReasoningSupport.openAICompatible("gpt-4o"))
+    }
+
+    func testOpenAICompatibleParsesReasoningContent() throws {
+        let json = """
+        {"choices":[{"message":{"role":"assistant","content":"Done.",
+         "reasoning_content":"I should check the file first."}}],
+         "usage":{"prompt_tokens":10,"completion_tokens":4}}
+        """
+        let response = try OpenAICompatibleProvider.parse(Data(json.utf8))
+        XCTAssertEqual(response.content, "Done.")
+        XCTAssertEqual(response.reasoning, "I should check the file first.")
+    }
+
+    func testOpenAICompatibleOmitsEmptyReasoning() throws {
+        let json = """
+        {"choices":[{"message":{"role":"assistant","content":"Hi","reasoning_content":"  "}}]}
+        """
+        let response = try OpenAICompatibleProvider.parse(Data(json.utf8))
+        XCTAssertNil(response.reasoning)
+    }
+
+    func testReasoningChunkFromDelta() {
+        XCTAssertEqual(
+            OpenAICompatibleProvider.reasoningChunk(from: ["reasoning_content": "step"]),
+            "step"
+        )
+        XCTAssertEqual(
+            OpenAICompatibleProvider.reasoningChunk(from: ["reasoning": "alt"]),
+            "alt"
+        )
+        XCTAssertNil(OpenAICompatibleProvider.reasoningChunk(from: ["content": "hi"]))
+    }
+
+    func testChatMessageReasoningRoundTripsAndLegacyDecode() throws {
+        let withReasoning = ChatMessage(role: .assistant, text: "Reply", reasoning: "Think")
+        let encoded = try JSONEncoder().encode(withReasoning)
+        let decoded = try JSONDecoder().decode(ChatMessage.self, from: encoded)
+        XCTAssertEqual(decoded.reasoning, "Think")
+
+        // Older saved conversations without a reasoning key must still load.
+        let legacy = """
+        {"id":"11111111-1111-1111-1111-111111111111","role":"assistant","text":"Hi",
+         "toolEvents":[],"attachments":[],"date":0}
+        """
+        let old = try JSONDecoder().decode(ChatMessage.self, from: Data(legacy.utf8))
+        XCTAssertNil(old.reasoning)
+        XCTAssertEqual(old.text, "Hi")
+    }
+
+    // MARK: - Settings isolation under XCTest
+
+    /// Regression: mutating SettingsStore must never touch the real Application
+    /// Support settings.json (a snapshot test once wiped the user's sites).
+    @MainActor
+    func testSettingsStoreMutationsDoNotTouchRealSettingsFile() throws {
+        let realURL = SettingsStore.productionFileURL
+        let beforeData = try? Data(contentsOf: realURL)
+        let beforeMod = try? FileManager.default
+            .attributesOfItem(atPath: realURL.path)[.modificationDate] as? Date
+
+        XCTAssertNotEqual(
+            SettingsStore.fileURL.standardizedFileURL,
+            realURL.standardizedFileURL,
+            "XCTest must auto-redirect SettingsStore.fileURL away from production")
+
+        let store = SettingsStore()
+        let fixture = SiteWorkspace(
+            name: "isolation-probe",
+            gitOwner: "example",
+            gitRepo: "must-not-persist",
+            gitBranch: "main",
+            techStack: .vanillaHTML,
+            deployment: .cloudflarePages,
+            defaultModel: "")
+        store.workspaces = [fixture]
+        store.activeWorkspaceID = fixture.id
+
+        // Even a mistaken redirect at the real path must be a no-op under XCTest.
+        let previous = SettingsStore.fileURL
+        SettingsStore.fileURL = realURL
+        defer { SettingsStore.fileURL = previous }
+        store.workspaces = [fixture]
+        store.activeWorkspaceID = fixture.id
+
+        let afterData = try? Data(contentsOf: realURL)
+        let afterMod = try? FileManager.default
+            .attributesOfItem(atPath: realURL.path)[.modificationDate] as? Date
+        XCTAssertEqual(beforeData, afterData)
+        XCTAssertEqual(beforeMod, afterMod)
     }
 }

@@ -6,29 +6,40 @@ struct CommandCenterView: View {
 
     @EnvironmentObject var settings: SettingsStore
     @EnvironmentObject var engine: AgentEngine
-    @Environment(\.sidebarSelection) private var sidebarSelection
+    @Environment(\.destination) private var destination
     @State private var recentCommits: [CommitEntry] = []
     @State private var isLoadingCommits = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                header
-                if settings.activeWorkspace == nil {
-                    noSiteCard
-                } else {
-                    statsGrid
-                    quickActions
-                    recommendations
-                    recentActivity
+        GeometryReader { proxy in
+            let gutter = AgentWorkspaceMetrics.gutter(for: proxy.size.width)
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    header
+                    if settings.activeWorkspace == nil {
+                        noSiteCard
+                    } else {
+                        statsGrid
+                        quickActions
+                        recommendations
+                        recentActivity
+                    }
                 }
+                .padding(.horizontal, gutter)
+                .padding(.top, 20)
+                .padding(.bottom, 20)
+                // No centered page wrapper: the dashboard uses the whole
+                // workspace, on the same gutter as every other destination.
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
-            .padding(Theme.Space.xl)
-            .frame(maxWidth: 1000, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         }
-        .background(Theme.brandWash.opacity(0.4).ignoresSafeArea())
-        .navigationTitle("Command Center")
+        .background {
+            ZStack {
+                Theme.canvas
+                Theme.brandWash.opacity(0.07)
+            }
+        }
         .task(id: settings.activeWorkspace?.id) { await loadCommits() }
     }
 
@@ -42,7 +53,7 @@ struct CommandCenterView: View {
                     .foregroundStyle(Theme.accent)
                     .textCase(.uppercase)
                 Text(settings.activeWorkspace?.name ?? "Website Commander")
-                    .font(Theme.display(34, weight: .heavy))
+                    .font(.system(size: 27, weight: .semibold))
             }
             Spacer()
             if let ws = settings.activeWorkspace {
@@ -74,8 +85,16 @@ struct CommandCenterView: View {
                      brandID: BrandMarkID.from(providerID: settings.providerID),
                      compact: true,
                      caption: settings.smartRouting ? "Auto-routing · \(settings.routingStrategy.rawValue)" : nil)
-            StatTile(title: "Session Cost", value: String(format: "$%.3f", engine.sessionCostUSD),
-                     systemImage: "dollarsign.circle.fill", tint: Theme.success)
+            StatTile(
+                title: "Session Cost",
+                value: engine.sessionCostUSD > 0
+                    ? String(format: "$%.3f", engine.sessionCostUSD)
+                    : "Cost tracking unavailable",
+                systemImage: "dollarsign.circle.fill",
+                tint: Theme.success,
+                compact: engine.sessionCostUSD == 0,
+                caption: engine.sessionCostUSD == 0 ? "Appears after reported token usage" : nil
+            )
         }
     }
 
@@ -93,23 +112,24 @@ struct CommandCenterView: View {
     private var quickActions: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
             SectionHeader(title: "Quick Actions", systemImage: "bolt.fill")
-            HStack(spacing: Theme.Space.m) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: Theme.Space.m)],
+                      spacing: Theme.Space.m) {
                 ActionCard(title: "New Chat", subtitle: "Talk to the agent",
                            systemImage: "bubble.left.fill", tint: Theme.accent) {
                     engine.newChat()
-                    sidebarSelection.wrappedValue = .agent
+                    destination.wrappedValue = .agent
                 }
                 ActionCard(title: "Add Site", subtitle: "Connect a repo",
                            systemImage: "plus.circle.fill", tint: Theme.accentDeep) {
-                    sidebarSelection.wrappedValue = .sites
+                    destination.wrappedValue = .sites
                 }
-                ActionCard(title: "Open in VSCode", subtitle: "Edit locally",
+                ActionCard(title: "Open in VS Code", subtitle: "Edit locally",
                            systemImage: "chevron.left.forwardslash.chevron.right", tint: Theme.success) {
                     NotificationCenter.default.post(name: .openInVSCode, object: nil)
                 }
                 ActionCard(title: "Preview", subtitle: "See the live site",
                            systemImage: "eye.fill", tint: Theme.warning) {
-                    sidebarSelection.wrappedValue = .preview
+                    destination.wrappedValue = .preview
                 }
                 ActionCard(title: "Debug & Fix", subtitle: "Export to any agent",
                            systemImage: "ladybug.fill", tint: Theme.danger) {
@@ -137,7 +157,7 @@ struct CommandCenterView: View {
                         SuggestionCard(title: item.title, icon: item.icon) {
                             engine.prefilledPrompt = item.prompt
                             engine.newChat()
-                            sidebarSelection.wrappedValue = .agent
+                            destination.wrappedValue = .agent
                         }
                     }
                 }
@@ -180,7 +200,7 @@ struct CommandCenterView: View {
             message: "Add a GitHub repository and an AI provider key, then tell the agent what to build.",
             actionTitle: "Add a Site"
         ) {
-            sidebarSelection.wrappedValue = .sites
+            destination.wrappedValue = .sites
         }
         .frame(minHeight: 320)
         .commandCard()
@@ -190,7 +210,7 @@ struct CommandCenterView: View {
 
     private func loadCommits() async {
         guard let ws = settings.activeWorkspace,
-              let token = settings.resolvedGitHubToken(for: ws), !token.isEmpty else {
+              let token = await settings.resolvedGitHubToken(forAsync: ws), !token.isEmpty else {
             recentCommits = []
             return
         }
@@ -217,8 +237,8 @@ struct ActionCard: View {
             VStack(alignment: .leading, spacing: Theme.Space.m) {
                 IconTile(systemImage: systemImage, tint: tint, size: 38)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.body.weight(.semibold))
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    Text(LocalizedStringKey(title)).font(.body.weight(.semibold))
+                    Text(LocalizedStringKey(subtitle)).font(.caption).foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -244,7 +264,7 @@ struct SuggestionCard: View {
                     .foregroundStyle(.white)
                     .frame(width: 32, height: 32)
                     .background(Theme.brandGradient, in: RoundedRectangle(cornerRadius: 9))
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(.callout.weight(.medium))
                     .foregroundStyle(.primary)
             }

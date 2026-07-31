@@ -35,10 +35,10 @@ struct OnboardingView: View {
                 .foregroundStyle(Theme.brandGradient)
                 .frame(height: 90)
             VStack(spacing: Theme.Space.m) {
-                Text(pages[page].title)
+                Text(LocalizedStringKey(pages[page].title))
                     .font(Theme.display(30, weight: .heavy))
                     .multilineTextAlignment(.center)
-                Text(pages[page].body)
+                Text(LocalizedStringKey(pages[page].body))
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -64,7 +64,7 @@ struct OnboardingView: View {
                 if page > 0 {
                     Button("Back") { withAnimation { page -= 1 } }
                 }
-                Button(page == pages.count - 1 ? "Get Started" : "Continue") {
+                Button(LocalizedStringKey(page == pages.count - 1 ? "Get Started" : "Continue")) {
                     if page == pages.count - 1 { finish() }
                     else { withAnimation { page += 1 } }
                 }

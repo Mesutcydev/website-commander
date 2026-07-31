@@ -2,13 +2,13 @@ import SwiftUI
 
 // MARK: - Icon tile
 
-/// A rounded, gradient-backed SF Symbol tile — the atomic visual unit of the app.
-/// Used for quick actions, sidebar accents, and list row icons.
+/// A compact SF Symbol tile. Neutral tint is the default; callers opt into the
+/// brand gradient only for a genuinely primary action.
 struct IconTile: View {
     let systemImage: String
-    var tint: Color = Theme.accent
+    var tint: Color = Theme.slateAccent
     var size: CGFloat = 40
-    var gradient: Bool = true
+    var gradient: Bool = false
 
     var body: some View {
         Image(systemName: systemImage)
@@ -29,7 +29,7 @@ struct StatTile: View {
     let title: String
     let value: String
     let systemImage: String
-    var tint: Color = Theme.accent
+    var tint: Color = Theme.slateAccent
     /// When set, the icon slot shows this official brand mark instead of the SF Symbol.
     var brandID: BrandMarkID? = nil
     /// When true, the value is rendered as a medium label (for words like a
@@ -63,7 +63,7 @@ struct StatTile: View {
                         .font(Theme.display(28, weight: .heavy))
                         .contentTransition(.numericText())
                 }
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 if let caption {
@@ -132,9 +132,9 @@ struct SectionHeader<Accessory: View>: View {
         HStack(spacing: Theme.Space.s) {
             if let systemImage {
                 Image(systemName: systemImage)
-                    .foregroundStyle(Theme.accent)
+                    .foregroundStyle(Theme.slateAccent)
             }
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(.headline)
             Spacer()
             accessory
@@ -166,8 +166,8 @@ struct PrimaryButtonStyle: ButtonStyle {
                 prominent ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Theme.accent.opacity(0.14)),
                 in: RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
             )
-            .shadow(color: prominent ? Theme.accent.opacity(0.35) : .clear,
-                    radius: configuration.isPressed ? 2 : 8, y: 3)
+            .shadow(color: prominent ? Color.black.opacity(0.14) : .clear,
+                    radius: configuration.isPressed ? 1 : 5, y: 2)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
@@ -246,6 +246,34 @@ struct EmptyStateView: View {
                     .buttonStyle(.primary)
                     .padding(.top, Theme.Space.s)
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(Theme.Space.xxl)
+    }
+}
+
+/// Shared recoverable failure state. Copy always explains that user work remains
+/// safe and provides one clear recovery action supplied by the caller.
+struct ErrorStateView: View {
+    let title: String
+    let message: String
+    var retryTitle = "Try Again"
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: Theme.Space.m) {
+            LivingTabMark(size: 58, style: .monochrome)
+                .foregroundStyle(Theme.danger)
+            Text(title)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(Theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+            Button(retryTitle, action: retry)
+                .buttonStyle(.primarySoft)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(Theme.Space.xxl)
