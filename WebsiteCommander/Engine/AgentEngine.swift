@@ -1264,6 +1264,9 @@ final class AgentEngine: ObservableObject {
         guard activeBlogImportSessionID != nil, blogImportRightsConfirmed else {
             return ToolResult(text: "No active rights-confirmed blog import.", success: false)
         }
+        guard case .inspectingRepository = blogImportPhase else {
+            return ToolResult(text: "The repository blog convention can only be declared once, after inspection and before staging.", success: false)
+        }
         guard let found = args["found"] as? Bool else {
             return ToolResult(text: "Missing found.", success: false)
         }
