@@ -229,6 +229,15 @@ struct GitHubClient {
 
         var treeEntries: [[String: Any]] = []
         for change in changes {
+            if change.isDeletion {
+                treeEntries.append([
+                    "path": change.path,
+                    "mode": "100644",
+                    "type": "blob",
+                    "sha": NSNull()
+                ])
+                continue
+            }
             let blobBody: [String: Any] = [
                 "content": change.data.base64EncodedString(),
                 "encoding": "base64"
