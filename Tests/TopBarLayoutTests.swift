@@ -188,10 +188,11 @@ final class TopBarLayoutTests: XCTestCase {
     /// Route names are persisted, so they must not drift; only the bar's short
     /// labels differ from them.
     func testRouteNamesArePreservedAndOnlyBarLabelsShorten() {
-        XCTAssertEqual(Destination.allCases.map(\.rawValue),
+        XCTAssertEqual(Destination.primaryCases.map(\.rawValue),
                        ["Command Center", "Sites", "Agent", "Preview", "History"])
-        XCTAssertEqual(Destination.allCases.map(\.barLabel),
+        XCTAssertEqual(Destination.primaryCases.map(\.barLabel),
                        ["Command", "Sites", "Agent", "Preview", "History"])
+        XCTAssertEqual(Destination.allCases.last, .blog)
         XCTAssertEqual(Destination(rawValue: "Agent"), .agent)
     }
 

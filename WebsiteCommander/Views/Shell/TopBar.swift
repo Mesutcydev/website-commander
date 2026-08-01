@@ -110,7 +110,7 @@ struct TopBar: View {
 
     private var destinationRow: some View {
         HStack(spacing: 2) {
-            ForEach(Destination.allCases) { item in
+            ForEach(Destination.primaryCases) { item in
                 TopBarNavigationItem(
                     item: item,
                     isActive: item == destination,

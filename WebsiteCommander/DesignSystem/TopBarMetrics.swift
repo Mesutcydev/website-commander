@@ -253,12 +253,12 @@ struct TopBarMetrics: Equatable {
             + navigationItemPaddingX * 2
     }
 
-    /// The five-item destination row at its true rendered width.
+    /// The five-item primary destination row at its true rendered width.
     static var destinationRowWidth: CGFloat {
-        let items = Destination.allCases.reduce(CGFloat.zero) { total, item in
+        let items = Destination.primaryCases.reduce(CGFloat.zero) { total, item in
             total + navigationItemWidth(for: item)
         }
-        let gaps = CGFloat(max(0, Destination.allCases.count - 1)) * navigationItemGap
+        let gaps = CGFloat(max(0, Destination.primaryCases.count - 1)) * navigationItemGap
         return items + gaps + navigationContainerPadding * 2
     }
 

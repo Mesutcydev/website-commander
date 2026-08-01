@@ -1,6 +1,8 @@
 import SwiftUI
 
-/// The five top-level destinations of the app.
+/// The primary top-level destinations of the app. Blog is experimental and
+/// remains available through the compact navigation menu and command palette
+/// so the established five-item wide layout stays calm.
 ///
 /// Raw values are the canonical route names and are persisted, so they must not
 /// change. `barLabel` is the shorter form the top bar shows — the route keeps
@@ -11,6 +13,11 @@ enum Destination: String, CaseIterable, Identifiable, Hashable {
     case agent = "Agent"
     case preview = "Preview"
     case history = "History"
+    case blog = "Blog"
+
+    static var primaryCases: [Destination] {
+        [.commandCenter, .sites, .agent, .preview, .history]
+    }
 
     var id: String { rawValue }
 
@@ -22,6 +29,7 @@ enum Destination: String, CaseIterable, Identifiable, Hashable {
         case .agent:         return "Agent"
         case .preview:       return "Preview"
         case .history:       return "History"
+        case .blog:          return "Blog"
         }
     }
 
@@ -33,6 +41,7 @@ enum Destination: String, CaseIterable, Identifiable, Hashable {
         case .agent:         return "bubble.left.and.text.bubble.right"
         case .preview:       return "eye"
         case .history:       return "clock"
+        case .blog:          return "book.closed"
         }
     }
 }

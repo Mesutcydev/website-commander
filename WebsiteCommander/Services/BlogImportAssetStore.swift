@@ -77,6 +77,9 @@ actor BlogImportAssetStore {
         sessions.removeValue(forKey: sessionID)
         let directory = rootURL.appendingPathComponent(sessionID.uuidString, isDirectory: true)
         try? FileManager.default.removeItem(at: directory)
+        if sessions.isEmpty {
+            try? FileManager.default.removeItem(at: rootURL)
+        }
     }
 
     func cleanupAll() {

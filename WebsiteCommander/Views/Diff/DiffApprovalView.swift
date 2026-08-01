@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// A single line in a computed diff.
 enum DiffLine {
@@ -71,6 +72,7 @@ struct DiffApprovalView: View {
     @State private var approvalConfirmed = false
     @State private var showSecurityScan = false
     @State private var securityScanProgress: CGFloat = 0
+    @State private var binaryPreview: NSImage?
 
     private var lang: SyntaxHighlight.Lang { .from(path: change.path) }
 
@@ -126,9 +128,13 @@ struct DiffApprovalView: View {
             if let approvalError { errorBanner(approvalError) }
             reviewSummary
             if !change.risks.isEmpty { riskBanner }
-            diffToolbar
-            diffArea
-                .animation(.easeOut(duration: 0.16), value: sideBySide)
+            if change.isBinary {
+                binaryReviewArea
+            } else {
+                diffToolbar
+                diffArea
+                    .animation(.easeOut(duration: 0.16), value: sideBySide)
+            }
             Divider()
             footer
         }
@@ -183,12 +189,18 @@ struct DiffApprovalView: View {
                 }
             }
             Spacer()
-            Text("+\(change.addedLines)")
-                .font(.system(size: 11, design: .monospaced).weight(.semibold))
-                .foregroundStyle(Theme.success)
-            Text("−\(change.removedLines)")
-                .font(.system(size: 11, design: .monospaced).weight(.semibold))
-                .foregroundStyle(Theme.danger)
+            if change.isBinary {
+                Label(change.statistics.summary, systemImage: "photo")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.secondaryText)
+            } else {
+                Text("+\(change.addedLines)")
+                    .font(.system(size: 11, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(Theme.success)
+                Text("−\(change.removedLines)")
+                    .font(.system(size: 11, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(Theme.danger)
+            }
             if let targetWorkspace {
                 Badge(text: targetWorkspace.name, systemImage: "folder",
                       tint: Theme.secondaryText, surface: Theme.secondarySurface)
@@ -221,6 +233,11 @@ struct DiffApprovalView: View {
                         .lineLimit(1)
                     Spacer()
                 }
+            }
+            if change.importSessionID != nil {
+                Label("Part of one atomic import", systemImage: "link.circle.fill")
+                    .font(Theme.ui(11.5, .medium))
+                    .foregroundStyle(Theme.accent)
             }
         }
         .padding(.horizontal, Theme.Space.l)
@@ -310,48 +327,140 @@ struct DiffApprovalView: View {
 
     private var diffToolbar: some View {
         HStack(spacing: Theme.Space.s) {
-            Label("File diff", systemImage: "arrow.left.arrow.right")
-                .font(Theme.ui(12, .semibold))
-                .foregroundStyle(Theme.secondaryText)
-            if showFind {
-                TextField("Find in diff", text: $findText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11, design: .monospaced))
-                    .padding(.horizontal, Theme.Space.s)
-                    .frame(width: 160, height: Theme.Height.compact)
-                    .background(Theme.recessedSurface,
-                                in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+            if change.isBinary {
+                Label("Binary asset", systemImage: "photo.on.rectangle")
+                    .font(Theme.ui(12, .semibold))
+                    .foregroundStyle(Theme.secondaryText)
+                Spacer()
+                Text("Contents stay file-backed until approval")
+                    .font(Theme.ui(11))
+                    .foregroundStyle(Theme.tertiaryText)
+            } else {
+                Label("File diff", systemImage: "arrow.left.arrow.right")
+                    .font(Theme.ui(12, .semibold))
+                    .foregroundStyle(Theme.secondaryText)
+                if showFind {
+                    TextField("Find in diff", text: $findText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11, design: .monospaced))
+                        .padding(.horizontal, Theme.Space.s)
+                        .frame(width: 160, height: Theme.Height.compact)
+                        .background(Theme.recessedSurface,
+                                    in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+                }
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(change.newContent, forType: .string)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.iconCompact)
+                .help("Copy new file contents")
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                Button {
+                    showFind.toggle()
+                    if !showFind { findText = "" }
+                } label: {
+                    Label("Find", systemImage: "magnifyingglass")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.iconCompact)
+                .help("Find in diff")
+                .keyboardShortcut("f", modifiers: [.command])
+                Picker("Diff layout", selection: $sideBySide) {
+                    Text("Unified").tag(false)
+                    Text("Side by side").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 168, height: Theme.Height.compact)
             }
-            Spacer()
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(change.newContent, forType: .string)
-            } label: {
-                Label("Copy", systemImage: "doc.on.doc")
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.iconCompact)
-            .help("Copy new file contents")
-            .keyboardShortcut("f", modifiers: [.command, .option])
-            Button {
-                showFind.toggle()
-                if !showFind { findText = "" }
-            } label: {
-                Label("Find", systemImage: "magnifyingglass")
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.iconCompact)
-            .help("Find in diff")
-            .keyboardShortcut("f", modifiers: [.command])
-            Picker("Diff layout", selection: $sideBySide) {
-                Text("Unified").tag(false)
-                Text("Side by side").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 168, height: Theme.Height.compact)
         }
         .padding(.horizontal, Theme.Space.l)
         .frame(height: 40)
+    }
+
+    private var binaryReviewArea: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.l) {
+                HStack(alignment: .top, spacing: Theme.Space.m) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(Theme.teal)
+                        .frame(width: 42, height: 42)
+                        .background(Theme.tealSoft,
+                                    in: RoundedRectangle(cornerRadius: Theme.Radius.medium,
+                                                         style: .continuous))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Binary asset")
+                            .font(Theme.ui(14, .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        if let binary = change.binaryContent {
+                            Text("\(binary.mimeType) · \(binary.byteCount) bytes")
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(Theme.secondaryText)
+                            if let width = binary.pixelWidth, let height = binary.pixelHeight {
+                                Text("\(width) × \(height) px · SHA-256 \(binary.sha256)")
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(Theme.tertiaryText)
+                                    .textSelection(.enabled)
+                            } else {
+                                Text("SHA-256 \(binary.sha256)")
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(Theme.tertiaryText)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    Spacer()
+                }
+
+                Group {
+                    if let binaryPreview {
+                        Image(nsImage: binaryPreview)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 360)
+                            .padding(Theme.Space.m)
+                    } else {
+                        VStack(spacing: Theme.Space.s) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.system(size: 34, weight: .light))
+                                .foregroundStyle(Theme.tertiaryText)
+                            Text("Preview unavailable")
+                                .font(Theme.ui(12, .medium))
+                                .foregroundStyle(Theme.secondaryText)
+                            Text("The file remains reviewable by MIME type, size, dimensions, and SHA-256.")
+                                .font(Theme.ui(11.5))
+                                .foregroundStyle(Theme.tertiaryText)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 220)
+                    }
+                }
+                .background(Theme.editorSurface,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.medium,
+                                                 style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
+                        .strokeBorder(Theme.borderHairline)
+                }
+
+                Text("This binary is part of an atomic blog import. Approving it also commits the reviewed article and any other files from the same import session.")
+                    .font(Theme.ui(11.5))
+                    .foregroundStyle(Theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(Theme.Space.l)
+            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .background(Theme.editorSurface)
+        .task(id: change.id) {
+            guard let reference = change.binaryContent?.assetReference,
+                  let data = await engine.blogAssetData(for: reference) else { return }
+            binaryPreview = NSImage(data: data)
+        }
     }
 
     private var diffArea: some View {
@@ -440,7 +549,10 @@ struct DiffApprovalView: View {
                     ApprovalProgressArc()
                         .frame(width: 16, height: 16)
                 }
-                else { Label("Approve changes", systemImage: "checkmark.circle.fill") }
+                else {
+                    Label(change.importSessionID == nil ? "Approve change" : "Approve import",
+                          systemImage: "checkmark.circle.fill")
+                }
             }
             .buttonStyle(.primary)
             .disabled(isCommitting || approvalConfirmed)

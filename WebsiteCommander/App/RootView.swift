@@ -293,6 +293,7 @@ struct RootView: View {
         case .agent:         AgentWorkspaceView()
         case .preview:       PreviewView(embedded: true)
         case .history:       HistoryView()
+        case .blog:          BlogView()
         }
     }
 }

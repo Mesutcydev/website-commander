@@ -135,7 +135,7 @@ final class XPostImporter {
         components.scheme = "https"
         components.host = "x.com"
         components.port = nil
-        components.path = "/(parts[0])/status/(parts[2])"
+        components.path = "/\(parts[0])/status/\(parts[2])"
         components.query = nil
         components.fragment = nil
         guard let canonical = components.url else { return nil }

@@ -54,12 +54,31 @@ enum BlogImportTransactionError: LocalizedError, Equatable, Sendable {
     case empty
     case wrongSession
     case invalidPath(String)
+    case assetIntegrity
 
     var errorDescription: String? {
         switch self {
         case .empty: return "The blog import contains no changes."
         case .wrongSession: return "The blog change belongs to a different import session."
         case .invalidPath(let path): return "The blog import produced an unsafe repository path: \(path)"
+        case .assetIntegrity: return "An imported media asset changed or is no longer available. Discard this import and start again."
+        }
+    }
+}
+
+enum BlogImportValidationError: LocalizedError, Equatable, Sendable {
+    case missingRequiredIndexUpdate
+    case missingAttribution
+    case unresolvedMediaReference(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingRequiredIndexUpdate:
+            return "The repository convention requires an index update, but no read index/config file was staged."
+        case .missingAttribution:
+            return "The article must include visible attribution to the canonical X source."
+        case .unresolvedMediaReference(let reference):
+            return "The article references media that was not staged or linked safely: \(reference)"
         }
     }
 }

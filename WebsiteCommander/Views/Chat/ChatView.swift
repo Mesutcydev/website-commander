@@ -1682,12 +1682,22 @@ struct PendingChangesBar: View {
     }
 
     private var changeSummary: some View {
-        let added = engine.pendingChanges.reduce(0) { $0 + $1.addedLines }
-        let removed = engine.pendingChanges.reduce(0) { $0 + $1.removedLines }
+        let textChanges = engine.pendingChanges.filter { !$0.isBinary }
+        let added = textChanges.reduce(0) { $0 + $1.addedLines }
+        let removed = textChanges.reduce(0) { $0 + $1.removedLines }
+        let binaryChanges = engine.pendingChanges.compactMap { $0.binaryContent }
+        let binaryBytes = binaryChanges.reduce(Int64(0)) { $0 + $1.byteCount }
         let risks = engine.pendingChanges.reduce(0) { $0 + $1.risks.count }
         return HStack(spacing: 4) {
-            Text("+\(added)").foregroundStyle(Theme.success)
-            Text("−\(removed)").foregroundStyle(Theme.danger)
+            if !textChanges.isEmpty {
+                Text("+\(added)").foregroundStyle(Theme.success)
+                Text("−\(removed)").foregroundStyle(Theme.danger)
+            }
+            if !binaryChanges.isEmpty {
+                Label("\(binaryChanges.count) asset\(binaryChanges.count == 1 ? "" : "s") · \(ByteCountFormatter.string(fromByteCount: binaryBytes, countStyle: .file))",
+                      systemImage: "photo")
+                    .foregroundStyle(Theme.teal)
+            }
             if risks > 0 {
                 Label("\(risks)", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(Theme.warning)
@@ -1697,6 +1707,6 @@ struct PendingChangesBar: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(Theme.elevatedSurface.opacity(0.75), in: Capsule())
-        .accessibilityLabel("\(added) lines added, \(removed) removed, \(risks) risk findings")
+        .accessibilityLabel("\(added) lines added, \(removed) removed, \(binaryChanges.count) binary assets, \(risks) risk findings")
     }
 }
