@@ -111,6 +111,8 @@ struct PreviewView: View {
     @State private var showAudit = false
     @State private var isAuditing = false
     @State private var isReloading = false
+    @State private var showRefreshHighlight = false
+    @State private var zoom: PreviewZoom = .fit
 
     /// The narrowest width a "Desktop" viewport is allowed to report to the
     /// page. Surfaces wider than this render 1:1 and fill; narrower ones render
@@ -132,6 +134,21 @@ struct PreviewView: View {
             case .mobile: return 390
             case .tablet: return 768
             case .desktop: return nil
+            }
+        }
+    }
+
+    private enum PreviewZoom: String, CaseIterable, Identifiable {
+        case fit = "Fit"
+        case oneHundred = "100%"
+        case oneTwentyFive = "125%"
+
+        var id: String { rawValue }
+        var factor: CGFloat {
+            switch self {
+            case .fit: return 1
+            case .oneHundred: return 1
+            case .oneTwentyFive: return 1.25
             }
         }
     }
@@ -185,7 +202,7 @@ struct PreviewView: View {
                 embeddedControlBar(gutter: gutter)
                 previewContent
                     .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                    .background(Color.white)
+                    .background(Theme.previewWorkspace)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
@@ -195,6 +212,7 @@ struct PreviewView: View {
                     .padding(.bottom, 20)
             }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+            .background { GlassPaneBackground() }
         }
     }
 
@@ -218,11 +236,18 @@ struct PreviewView: View {
     /// One row, on the workspace gutter: the real address, the viewport presets,
     /// real console counts, and the preview's own actions.
     private func embeddedControlBar(gutter: CGFloat) -> some View {
-        WorkspaceCommandRow(gutter: gutter) {
+        HStack(spacing: Theme.Space.s) {
             HStack(spacing: 6) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(liveURL == nil ? Theme.Chrome.textMuted : Theme.success)
+                if liveURL == nil {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.Chrome.textMuted)
+                } else {
+                    AmbientConnectionSignal(tint: Theme.success,
+                                             mode: .breathing,
+                                             active: true,
+                                             label: "Live preview connected")
+                }
                 Text(liveURL?.absoluteString ?? String(localized: "No live URL"))
                     .font(Theme.ui(12, .medium))
                     .foregroundStyle(Theme.Chrome.textSecondary)
@@ -261,13 +286,46 @@ struct PreviewView: View {
             .disabled(liveURL == nil)
             .help("Open in the default browser")
 
-            Spacer(minLength: TopBarMetrics.groupGap)
-
+            Spacer(minLength: 0)
             devicePicker
+            Spacer(minLength: 0)
+            zoomControls
             inspectorBadges
             previewActionButtons
                 .labelStyle(.iconOnly)
         }
+        .padding(.horizontal, gutter)
+        .frame(height: 46)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var zoomControls: some View {
+        HStack(spacing: 2) {
+            ForEach([PreviewZoom.fit, .oneHundred], id: \.self) { option in
+                Button(option.rawValue) { zoom = option }
+                    .font(Theme.ui(11.5, zoom == option ? .semibold : .medium))
+                    .foregroundStyle(zoom == option ? Theme.accent : Theme.secondaryText)
+                    .padding(.horizontal, 7)
+                    .frame(height: Theme.Height.compact)
+                    .background(zoom == option ? Theme.accentSoft : .clear,
+                                in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
+                    .buttonStyle(.plain)
+            }
+            Menu {
+                ForEach(PreviewZoom.allCases) { option in
+                    Button(option.rawValue) { zoom = option }
+                }
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+                    .frame(width: Theme.Height.compact, height: Theme.Height.compact)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("Zoom preview")
+        }
+        .padding(2)
+        .background(Theme.secondarySurface,
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
     }
 
     private var devicePicker: some View {
@@ -288,16 +346,27 @@ struct PreviewView: View {
             if isAuditing { ProgressView().controlSize(.small) }
             else { Label("Audit", systemImage: "checkmark.shield") }
         }
-        .disabled(!browser.isAvailable)
+        .disabled(liveURL == nil || isAuditing)
+        .help(liveURL == nil ? "Add a valid live URL to audit this site" : "Run a local preview audit")
 
         Button { analyzeWithAI() } label: {
             Label("Analyze with AI", systemImage: "sparkles")
         }
-        .disabled(!browser.isAvailable)
+        .disabled(liveURL == nil)
+        .help(liveURL == nil ? "Add a valid live URL to analyze this site" : "Ask the agent to analyze the live site")
 
-        Button { NotificationCenter.default.post(name: .requestDebug, object: nil) } label: {
-            Label("Debug", systemImage: "ladybug.fill")
+        Menu {
+            Button { NotificationCenter.default.post(name: .requestDebug, object: nil) } label: {
+                Label("Debug", systemImage: "ladybug.fill")
+            }
+            Button { withAnimation { showInspector.toggle() } } label: {
+                Label(showInspector ? "Hide Inspector" : "Show Inspector",
+                      systemImage: showInspector ? "wand.and.rays.inverse" : "wand.and.rays")
+            }
+        } label: {
+            Label("Tools", systemImage: "ellipsis.circle")
         }
+        .help("Debug and inspect the preview")
 
         Button { reload() } label: {
             if isReloading {
@@ -308,11 +377,6 @@ struct PreviewView: View {
         }
         .disabled(isReloading || liveURL == nil)
         .help(isReloading ? "Reloading preview" : "Reload preview")
-
-        Button { withAnimation { showInspector.toggle() } } label: {
-            Label("Inspector", systemImage: showInspector ? "wand.and.rays.inverse" : "wand.and.rays")
-        }
-        .tint(showInspector ? Theme.accent : nil)
     }
 
     private var inspectorBadges: some View {
@@ -342,6 +406,16 @@ struct PreviewView: View {
     private func runAudit() async {
         isAuditing = true
         defer { isAuditing = false }
+        guard liveURL != nil else { return }
+        guard await browser.ensureAvailable() else {
+            auditIssues = [SiteAuditIssue(
+                title: "Preview browser unavailable",
+                detail: "Open the Preview tab and try again so the live page can be inspected.",
+                severity: .critical
+            )]
+            showAudit = true
+            return
+        }
         let html = await browser.snapshotHTML()
         auditIssues = SiteAuditor.audit(html: html, inspector: browser.inspector)
         showAudit = true
@@ -350,15 +424,19 @@ struct PreviewView: View {
     private func reload() {
         guard !isReloading, liveURL != nil else { return }
         isReloading = true
+        showRefreshHighlight = true
         reloadToken = UUID()
         Task {
             try? await Task.sleep(for: .milliseconds(700))
             isReloading = false
+            try? await Task.sleep(for: .milliseconds(300))
+            showRefreshHighlight = false
         }
     }
 
     /// Hand the live page to the agent for a free-form analysis.
     private func analyzeWithAI() {
+        guard liveURL != nil else { return }
         engine.prefilledPrompt = SiteAuditor.analyzePrompt(url: liveURL?.absoluteString ?? "the preview")
         engine.newChat()
         destination.wrappedValue = .agent
@@ -374,7 +452,18 @@ struct PreviewView: View {
 
     @ViewBuilder
     private var previewCanvas: some View {
-        if device == .desktop {
+        ZStack(alignment: .top) {
+            Theme.previewWorkspace
+            RadialGradient(colors: [Color.white.opacity(0.75),
+                                     Color.white.opacity(0.18),
+                                     .clear],
+                           center: .center,
+                           startRadius: 0,
+                           endRadius: 520)
+            PreviewTechnicalGrid()
+
+            Group {
+                if device == .desktop {
             // Desktop means "use the room we have". The viewport only becomes a
             // fixed, scaled-down 900pt canvas when the surface is genuinely
             // narrower than a desktop breakpoint — otherwise a responsive site
@@ -385,7 +474,8 @@ struct PreviewView: View {
             GeometryReader { proxy in
                 let available = max(proxy.size.width, 1)
                 let viewportWidth = max(Self.desktopViewportFloor, available)
-                let scale = min(1, available / viewportWidth)
+                let fitScale = min(1, available / viewportWidth)
+                let scale = zoom == .fit ? fitScale : zoom.factor
                 let viewportHeight = scale < 1
                     ? max(proxy.size.height / scale, 720)
                     : max(proxy.size.height, 1)
@@ -402,7 +492,7 @@ struct PreviewView: View {
                         inspectModeBanner
                     }
                 }
-        } else {
+                } else {
             ScrollView([.horizontal, .vertical]) {
                 WebView(url: liveURL, reloadToken: reloadToken, browser: browser)
                     .frame(width: device.width)
@@ -411,14 +501,24 @@ struct PreviewView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 22))
                     .overlay(RoundedRectangle(cornerRadius: 22)
                         .strokeBorder(Theme.borderSubtle, lineWidth: 1))
-                    .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
+                    .shadow(color: Theme.Shadow.ambientRaised, radius: 18, y: 8)
                     .padding(Theme.Space.xl)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.canvas)
+            .background(Color.clear)
             .overlay(alignment: .top) {
                 inspectModeBanner
             }
+                }
+            }
+            .animation(Motion.layout, value: device)
+
+            PreviewRefreshSweep(active: isReloading)
+                .frame(height: 2)
+
+            RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
+                .stroke(Theme.accent.opacity(showRefreshHighlight ? 0.42 : 0), lineWidth: 1)
+                .animation(Motion.gentle, value: showRefreshHighlight)
         }
     }
 
@@ -432,6 +532,70 @@ struct PreviewView: View {
                 .foregroundStyle(.black)
                 .padding(.top, Theme.Space.s)
         }
+    }
+}
+
+// MARK: - Preview motion
+
+/// A deliberately faint grid that lives behind the device/web surface. It adds
+/// depth to the preview canvas without ever painting over the rendered site.
+private struct PreviewTechnicalGrid: View {
+    @EnvironmentObject private var motion: AmbientMotionCoordinator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { proxy in
+            let step: CGFloat = 24
+            let phase = motion.phase(period: 28)
+            let shift = reduceMotion || !motion.isRunning ? 0 : CGFloat(phase) * 10
+            Canvas { context, size in
+                var path = Path()
+                for x in stride(from: -step + shift, through: size.width + step, by: step) {
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: size.height))
+                }
+                for y in stride(from: -step + shift, through: size.height + step, by: step) {
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: size.width, y: y))
+                }
+                context.stroke(path,
+                               with: .color(Theme.previewGrid.opacity(reduceMotion ? 0.70 : 1)),
+                               lineWidth: 0.5)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// One refresh sweep, tied to the real reload action. It never repeats while
+/// idle and becomes a static accent under Reduce Motion.
+private struct PreviewRefreshSweep: View {
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var progress: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { proxy in
+            Capsule()
+                .fill(Theme.accent.opacity(active ? 0.55 : 0))
+                .frame(width: max(32, proxy.size.width * 0.18), height: 2)
+                .offset(x: reduceMotion ? 0 : progress * proxy.size.width)
+        }
+        .clipped()
+        .allowsHitTesting(false)
+        .onAppear {
+            if active { run() }
+        }
+        .onChange(of: active) { _, isActive in
+            if isActive { run() }
+        }
+    }
+
+    private func run() {
+        progress = reduceMotion ? 0 : -0.18
+        guard !reduceMotion else { return }
+        withAnimation(.linear(duration: 0.7)) { progress = 1.0 }
     }
 }
 

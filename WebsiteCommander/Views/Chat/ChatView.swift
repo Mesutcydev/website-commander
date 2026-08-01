@@ -34,7 +34,8 @@ struct ChatView: View {
     var onScrolledUnder: ((Bool) -> Void)?
     @EnvironmentObject var engine: AgentEngine
     @EnvironmentObject var settings: SettingsStore
-    @SceneStorage("agent.composerDraft") private var draft = ""
+    @State private var draft = ""
+    @State private var draftWorkspaceID: UUID?
     @State private var reviewingChange: PendingChange?
     @State private var showConversations = false
     @State private var attachments: [Attachment] = []
@@ -62,6 +63,7 @@ struct ChatView: View {
         }
         .animation(Motion.smooth, value: engine.pendingChanges.isEmpty)
         .onAppear {
+            restoreDraft()
             if let prompt = engine.prefilledPrompt {
                 draft = prompt
                 engine.prefilledPrompt = nil
@@ -79,6 +81,13 @@ struct ChatView: View {
         }
         .onChange(of: composerFocused) { _, focused in
             if !focused { composerFocusChrome = false }
+        }
+        .onChange(of: draft) { _, newValue in
+            guard draftWorkspaceID == currentDraftWorkspaceID else { return }
+            UserDefaults.standard.set(newValue, forKey: draftStorageKey(for: draftWorkspaceID))
+        }
+        .onChange(of: settings.activeWorkspaceID) { _, _ in
+            restoreDraft()
         }
         .onChange(of: engine.prefilledPrompt) { _, newValue in
             if let newValue { draft = newValue; engine.prefilledPrompt = nil }
@@ -168,6 +177,9 @@ struct ChatView: View {
             if let note = engine.lastCommitNote {
                 commitBanner(note)
             }
+            if let warning = engine.lastDeploymentWarning {
+                deploymentWarningBanner(warning)
+            }
             Rectangle()
                 .fill(Theme.divider)
                 .frame(height: 1)
@@ -189,8 +201,11 @@ struct ChatView: View {
             if engine.canContinue {
                 Button("Continue") { engine.continueRun() }
                     .buttonStyle(.primarySoftCompact)
-            } else {
+            } else if engine.lastApprovalError == nil {
                 Button("Retry") { retryLastPrompt() }
+                    .buttonStyle(.primarySoftCompact)
+            } else if let change = engine.pendingChanges.first {
+                Button("Review change") { reviewingChange = change }
                     .buttonStyle(.primarySoftCompact)
             }
             Button {
@@ -222,6 +237,7 @@ struct ChatView: View {
             }
             Button {
                 engine.lastCommitNote = nil
+                engine.lastDeploymentWarning = nil
             } label: {
                 Label("Dismiss deployment status", systemImage: "xmark")
             }
@@ -231,6 +247,33 @@ struct ChatView: View {
         .padding(.horizontal, Theme.Space.m)
         .padding(.vertical, Theme.Space.s)
         .background(Theme.greenSoft)
+    }
+
+    private func deploymentWarningBanner(_ warning: String) -> some View {
+        HStack(spacing: Theme.Space.s) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Change committed, but deployment needs attention")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(warning)
+                    .font(.caption2)
+                    .foregroundStyle(Theme.secondaryText)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Button {
+                engine.lastDeploymentWarning = nil
+            } label: {
+                Label("Dismiss deployment warning", systemImage: "xmark")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, Theme.Space.m)
+        .padding(.vertical, Theme.Space.s)
+        .background(Theme.amberSoft)
     }
 
     // MARK: Transcript
@@ -701,6 +744,7 @@ struct ChatView: View {
 
     private func composer(metrics: AgentWorkspaceMetrics) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
+            promptHeader
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Theme.Space.s) {
@@ -738,9 +782,21 @@ struct ChatView: View {
                 }
                 .padding(.horizontal, Theme.Space.m + 2)
                 .padding(.vertical, 9)
-                .frame(minHeight: 54)
+                .frame(minHeight: Theme.Height.composer)
                 .background(Theme.elevatedSurface,
                             in: RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous)
+                        .strokeBorder(composerShowsFocus ? Theme.accent.opacity(0.44) : Theme.borderStandard,
+                                      lineWidth: 1)
+                }
+                .overlay(alignment: .top) {
+                    RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.88), lineWidth: 1)
+                        .mask(LinearGradient(colors: [.white, .clear],
+                                              startPoint: .top,
+                                              endPoint: .center))
+                }
                 .activityBorder(active: engine.state.isActive, focused: composerShowsFocus)
                 .cardElevation(raised: composerShowsFocus)
                 .animation(Motion.smooth, value: composerShowsFocus)
@@ -785,6 +841,26 @@ struct ChatView: View {
             && !engine.isRunActive
     }
 
+    private var promptHeader: some View {
+        HStack(spacing: Theme.Space.s) {
+            Label("Agent prompt", systemImage: "sparkles")
+                .font(Theme.ui(11.5, .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Spacer()
+            Label(settings.autoCommit ? "Auto-commit on" : "Review before commit",
+                  systemImage: settings.autoCommit ? "bolt.fill" : "checkmark.shield.fill")
+                .font(Theme.ui(10.5, .medium))
+                .foregroundStyle(settings.autoCommit ? Theme.warning : Theme.success)
+            Text("⌘↩")
+                .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                .foregroundStyle(Theme.tertiaryText)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Theme.secondarySurface, in: Capsule())
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private var composerFooter: some View {
         HStack(spacing: 5) {
             if let workspace = settings.activeWorkspace {
@@ -813,10 +889,25 @@ struct ChatView: View {
             ? "Review the attached file\(attachments.count == 1 ? "" : "s")."
             : draft
         let outgoingAttachments = attachments
+        UserDefaults.standard.removeObject(forKey: draftStorageKey(for: draftWorkspaceID))
         draft = ""
         attachments = []
         attachmentError = nil
         engine.send(text, attachments: outgoingAttachments)
+    }
+
+    private var currentDraftWorkspaceID: UUID? {
+        settings.activeWorkspace?.id
+    }
+
+    private func draftStorageKey(for workspaceID: UUID?) -> String {
+        "agent.composerDraft.\(workspaceID?.uuidString ?? "unassigned")"
+    }
+
+    private func restoreDraft() {
+        let workspaceID = currentDraftWorkspaceID
+        draftWorkspaceID = workspaceID
+        draft = UserDefaults.standard.string(forKey: draftStorageKey(for: workspaceID)) ?? ""
     }
 
     private func attachmentChip(_ attachment: Attachment) -> some View {
@@ -1126,7 +1217,9 @@ private struct SmartTaskCardStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .background(configuration.isPressed ? Theme.secondarySurface : Theme.elevatedSurface,
+                .background(configuration.isPressed
+                            ? AnyShapeStyle(Theme.secondarySurface)
+                            : AnyShapeStyle(Theme.standardPanelGradient),
                             in: shape)
                 .overlay {
                     shape.strokeBorder(isHovering ? Theme.borderStandard : Theme.borderSubtle,
@@ -1235,8 +1328,8 @@ struct LiveToolActivity: View {
             }
         }
         .padding(Theme.Space.m)
-        .background(Theme.elevatedSurface,
-                    in: RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
+                .background(Theme.standardPanelGradient,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
                 .strokeBorder(Theme.borderSubtle)
@@ -1503,7 +1596,7 @@ struct MessageBubble: View {
                 .frame(maxWidth: isUser ? nil : proseMaxWidth,
                        alignment: .leading)
                 .background(background, in: bubbleShape)
-                .foregroundStyle(isUser ? .white : .primary)
+                .foregroundStyle(isUser ? Theme.textInverse : Theme.textPrimary)
             }
         }
     }
@@ -1551,30 +1644,17 @@ struct MessageBubble: View {
 // MARK: - Typing indicator
 
 struct TypingIndicator: View {
-    @EnvironmentObject var settings: SettingsStore
-    @State private var phase = 0.0
-
-    private var providerID: String {
-        settings.preferOnDevice ? "ondevice" : settings.providerID
-    }
-
     var body: some View {
-        HStack(spacing: 6) {
-            ProviderAvatar(size: 28, providerID: providerID, active: true, state: .thinking)
-            HStack(spacing: 4) {
-                ForEach(0..<3) { i in
-                    Circle().fill(Theme.tertiaryText)
-                        .frame(width: 6, height: 6)
-                        .opacity(0.4 + 0.6 * abs(sin(phase + Double(i) * 0.6)))
-                }
-            }
-            .padding(.horizontal, Theme.Space.m).padding(.vertical, Theme.Space.s + 2)
-            .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
+        HStack(spacing: Theme.Space.s) {
+            AgentActivityGlyph(state: .thinking, size: 20)
+            Text("Agent is thinking…")
+                .font(Theme.ui(12.5, .medium))
+                .foregroundStyle(Theme.secondaryText)
         }
+        .padding(.horizontal, Theme.Space.m)
+        .padding(.vertical, Theme.Space.s)
+        .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
         .wcAppear()
-        .onAppear {
-            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) { phase = .pi }
-        }
     }
 }
 

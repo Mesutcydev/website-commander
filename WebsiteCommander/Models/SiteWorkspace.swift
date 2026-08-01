@@ -124,10 +124,23 @@ struct SiteWorkspace: Identifiable, Codable, Equatable {
     /// Accepts bare domains (e.g. `example.com`) and adds `https://` when needed.
     static func normalizedLiveURL(_ raw: String) -> URL? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let normalized = (trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://"))
+        guard !trimmed.isEmpty,
+              !trimmed.contains(where: { $0.isWhitespace }) else { return nil }
+        // Preserve an explicitly supplied scheme so unsafe values such as
+        // `file:` or `javascript:` cannot be mistaken for bare domains.
+        if let suppliedScheme = URLComponents(string: trimmed)?.scheme,
+           !["http", "https"].contains(suppliedScheme.lowercased()) {
+            return nil
+        }
+        let normalized = URLComponents(string: trimmed)?.scheme != nil
             ? trimmed : "https://\(trimmed)"
-        return URL(string: normalized)
+        guard let components = URLComponents(string: normalized),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              let host = components.host,
+              !host.isEmpty,
+              !host.contains(" ") else { return nil }
+        return components.url
     }
 
     // MARK: - Tolerant decoding

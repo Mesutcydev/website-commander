@@ -26,6 +26,7 @@ final class WebsiteCommanderTests: XCTestCase {
         let settings = SettingsStore()
         let workspace = SiteWorkspace(name: "Agent Test", gitOwner: "octocat",
                                       gitRepo: "hello-world", gitBranch: "main",
+                                      githubCredentialID: UUID(),
                                       techStack: .vanillaHTML, deployment: .githubPages,
                                       defaultModel: "stub")
         settings.workspaces = [workspace]
@@ -35,8 +36,8 @@ final class WebsiteCommanderTests: XCTestCase {
 
     // MARK: - Agent workspace layout + activity grouping
 
-    func testWorkspaceDefaultSplitUsesThirtyEightPercent() {
-        XCTAssertEqual(WorkspaceLayout.defaultAgentWidth(in: 1200), 456, accuracy: 0.01)
+    func testWorkspaceDefaultSplitUsesTheStableAgentWidth() {
+        XCTAssertEqual(WorkspaceLayout.defaultAgentWidth(in: 1200), 420, accuracy: 0.01)
     }
 
     func testWorkspaceSplitRespectsBothPaneMinimums() {
@@ -44,10 +45,7 @@ final class WebsiteCommanderTests: XCTestCase {
             WorkspaceLayout.clampedAgentWidth(100, in: 1100),
             WorkspaceLayout.agentMinimum
         )
-        XCTAssertEqual(
-            WorkspaceLayout.clampedAgentWidth(900, in: 1100),
-            1100 - WorkspaceLayout.previewMinimum - WorkspaceLayout.dividerWidth
-        )
+        XCTAssertEqual(WorkspaceLayout.clampedAgentWidth(900, in: 1100), 520)
     }
 
     func testToolEventsCollapseIntoSemanticGroupsAndPreserveFailures() {
@@ -111,6 +109,33 @@ final class WebsiteCommanderTests: XCTestCase {
 
         XCTAssertTrue(engine.pendingChanges.isEmpty)
         XCTAssertEqual(engine.state, .done)
+    }
+
+    @MainActor
+    func testStagedChangeKeepsItsWorkspaceTarget() {
+        let engine = makeAgentEngine()
+        let workspaceID = engine.settings.activeWorkspace?.id
+        engine.stagePendingChange(path: "index.html", content: "new",
+                                  message: "Update page", oldContent: "old",
+                                  baseSHA: "abc")
+
+        XCTAssertEqual(engine.pendingChanges.first?.workspaceID, workspaceID)
+    }
+
+    @MainActor
+    func testApprovalFailureKeepsChangeForReview() async {
+        let engine = makeAgentEngine()
+        engine.stagePendingChange(path: "index.html", content: "new",
+                                  message: "Update page", oldContent: "old",
+                                  baseSHA: "abc")
+        let change = try! XCTUnwrap(engine.pendingChanges.first)
+
+        let approved = await engine.approve(change)
+
+        XCTAssertFalse(approved)
+        XCTAssertEqual(engine.pendingChanges.count, 1)
+        XCTAssertEqual(engine.state, .failed)
+        XCTAssertTrue(engine.lastApprovalError?.contains("GitHub") == true)
     }
 
     @MainActor
@@ -199,6 +224,14 @@ final class WebsiteCommanderTests: XCTestCase {
     func testParseRemoteGarbageIsNil() {
         XCTAssertNil(RepoDetector.parseRemote(""))
         XCTAssertNil(RepoDetector.parseRemote("not a url at all"))
+    }
+
+    func testNormalizedLiveURLOnlyAllowsWebAddresses() {
+        XCTAssertEqual(SiteWorkspace.normalizedLiveURL("example.com")?.scheme, "https")
+        XCTAssertEqual(SiteWorkspace.normalizedLiveURL("https://example.com/path")?.host, "example.com")
+        XCTAssertNil(SiteWorkspace.normalizedLiveURL("file:///tmp/index.html"))
+        XCTAssertNil(SiteWorkspace.normalizedLiveURL("javascript:alert(1)"))
+        XCTAssertNil(SiteWorkspace.normalizedLiveURL("https://bad host.example"))
     }
 
     // MARK: - Diff engine (visual diff review)

@@ -5,19 +5,44 @@ enum GitHubError: LocalizedError {
     case http(Int, String)
     case decoding(String)
     case notFound(String)
+    case branchDrift(expected: String, actual: String)
 
     var errorDescription: String? {
         switch self {
         case .noToken:
             return "No GitHub token. Add one in Settings → GitHub."
         case .http(let code, let body):
-            return "GitHub error \(code): \(body)"
+            switch code {
+            case 401:
+                return "GitHub rejected the token (401). Reconnect the account in Settings → GitHub."
+            case 403:
+                return "GitHub denied this write (403). Check that the connected token can write to this repository."
+            case 404:
+                return "GitHub could not find the repository, branch, or file (404). Verify the site connection."
+            case 409:
+                return "GitHub could not apply this change because the repository changed. Review the file again and restage it."
+            case 422:
+                return "GitHub could not validate this change (422). Check the branch and file path, then try again."
+            default:
+                let detail = body.trimmingCharacters(in: .whitespacesAndNewlines)
+                return detail.isEmpty
+                    ? "GitHub returned an error (\(code)). Try again."
+                    : "GitHub returned an error (\(code)): \(String(detail.prefix(220)))"
+            }
         case .decoding(let what):
             return "Couldn't read GitHub response: \(what)"
         case .notFound(let what):
             return "Not found: \(what)"
+        case .branchDrift:
+            return "The branch changed after this import was prepared. Refresh the review before committing."
         }
     }
+}
+
+struct GitHubBatchChange {
+    var path: String
+    var data: Data
+    var isDeletion: Bool = false
 }
 
 /// A minimal GitHub REST client covering everything the agent needs: list repos,
@@ -27,8 +52,14 @@ struct GitHubClient {
 
     let token: String
     var apiBase: String = "https://api.github.com"
+    let session: URLSession
 
-    private var session: URLSession { .shared }
+    init(token: String, apiBase: String = "https://api.github.com",
+         session: URLSession = .shared) {
+        self.token = token
+        self.apiBase = apiBase
+        self.session = session
+    }
 
     private func request(_ path: String, method: String = "GET",
                          body: [String: Any]? = nil) async throws -> (Data, HTTPURLResponse) {
@@ -104,18 +135,28 @@ struct GitHubClient {
         .sorted { ($0.type == $1.type) ? ($0.name < $1.name) : ($0.type == .dir) }
     }
 
-    /// Read a file's UTF-8 content and its blob SHA.
-    func fileContent(owner: String, repo: String, path: String, branch: String) async throws -> (content: String, sha: String) {
+    /// Read a file's raw bytes and blob SHA. This is also the safe metadata path
+    /// for binary assets; callers do not need to force arbitrary bytes through
+    /// UTF-8 decoding.
+    func fileData(owner: String, repo: String, path: String, branch: String) async throws -> (data: Data, sha: String) {
         let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
         let (data, _) = try await request("/repos/\(owner)/\(repo)/contents/\(encoded)?ref=\(branch)")
         guard let obj = try json(data) as? [String: Any] else {
-            throw GitHubError.decoding("file content")
+            throw GitHubError.decoding("file data")
         }
         let sha = (obj["sha"] as? String) ?? ""
         let raw = (obj["content"] as? String) ?? ""
         let cleaned = raw.replacingOccurrences(of: "\n", with: "")
-        let decoded = Data(base64Encoded: cleaned).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        guard let decoded = Data(base64Encoded: cleaned) else {
+            throw GitHubError.decoding("base64 file data")
+        }
         return (decoded, sha)
+    }
+
+    /// Read a file's UTF-8 content and its blob SHA.
+    func fileContent(owner: String, repo: String, path: String, branch: String) async throws -> (content: String, sha: String) {
+        let raw = try await fileData(owner: owner, repo: repo, path: path, branch: branch)
+        return (String(data: raw.data, encoding: .utf8) ?? "", raw.sha)
     }
 
     /// Create or update a file and commit it in one call. Pass `sha` to update an
@@ -148,6 +189,99 @@ struct GitHubClient {
         _ = try await request("/repos/\(owner)/\(repo)/contents/\(encoded)", method: "DELETE", body: body)
     }
 
+    // MARK: Atomic batch commits
+
+    /// Return the current commit SHA at a branch head.
+    func branchHeadSHA(owner: String, repo: String, branch: String) async throws -> String {
+        let encodedBranch = branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
+        let (data, _) = try await request("/repos/\(owner)/\(repo)/git/ref/heads/\(encodedBranch)")
+        guard let obj = try json(data) as? [String: Any],
+              let object = obj["object"] as? [String: Any],
+              let sha = object["sha"] as? String, !sha.isEmpty else {
+            throw GitHubError.decoding("branch head")
+        }
+        return sha
+    }
+
+    /// Commit multiple text/binary files as one non-force update. The branch
+    /// head is checked immediately before the Git Data API sequence so a blog
+    /// import cannot silently overwrite unrelated remote work.
+    @discardableResult
+    func commitBatch(owner: String, repo: String, branch: String,
+                     expectedParentSHA: String, message: String,
+                     changes: [GitHubBatchChange]) async throws -> String {
+        guard !changes.isEmpty else { throw GitHubError.decoding("empty batch") }
+        let currentHead = try await branchHeadSHA(owner: owner, repo: repo, branch: branch)
+        guard currentHead == expectedParentSHA else {
+            throw GitHubError.branchDrift(expected: expectedParentSHA, actual: currentHead)
+        }
+
+        let encodedParent = expectedParentSHA.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? expectedParentSHA
+        let (commitData, _) = try await request(
+            "/repos/\(owner)/\(repo)/git/commits/\(encodedParent)"
+        )
+        guard let commit = try json(commitData) as? [String: Any],
+              let tree = commit["tree"] as? [String: Any],
+              let baseTreeSHA = tree["sha"] as? String else {
+            throw GitHubError.decoding("parent tree")
+        }
+
+        var treeEntries: [[String: Any]] = []
+        for change in changes {
+            let blobBody: [String: Any] = [
+                "content": change.data.base64EncodedString(),
+                "encoding": "base64"
+            ]
+            let (blobData, _) = try await request(
+                "/repos/\(owner)/\(repo)/git/blobs", method: "POST", body: blobBody
+            )
+            guard let blob = try json(blobData) as? [String: Any],
+                  let blobSHA = blob["sha"] as? String else {
+                throw GitHubError.decoding("created blob")
+            }
+            treeEntries.append([
+                "path": change.path,
+                "mode": "100644",
+                "type": "blob",
+                "sha": blobSHA
+            ])
+        }
+
+        let treeBody: [String: Any] = [
+            "base_tree": baseTreeSHA,
+            "tree": treeEntries
+        ]
+        let (treeData, _) = try await request(
+            "/repos/\(owner)/\(repo)/git/trees", method: "POST", body: treeBody
+        )
+        guard let createdTree = try json(treeData) as? [String: Any],
+              let createdTreeSHA = createdTree["sha"] as? String else {
+            throw GitHubError.decoding("created tree")
+        }
+
+        let commitBody: [String: Any] = [
+            "message": message,
+            "tree": createdTreeSHA,
+            "parents": [expectedParentSHA]
+        ]
+        let (newCommitData, _) = try await request(
+            "/repos/\(owner)/\(repo)/git/commits", method: "POST", body: commitBody
+        )
+        guard let newCommit = try json(newCommitData) as? [String: Any],
+              let newCommitSHA = newCommit["sha"] as? String else {
+            throw GitHubError.decoding("created commit")
+        }
+
+        let encodedBranch = branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
+        let refBody: [String: Any] = ["sha": newCommitSHA, "force": false]
+        _ = try await request(
+            "/repos/\(owner)/\(repo)/git/refs/heads/\(encodedBranch)",
+            method: "PATCH", body: refBody
+        )
+        return newCommitSHA
+    }
+
     // MARK: History
 
     func commits(owner: String, repo: String, branch: String, limit: Int = 30) async throws -> [CommitEntry] {
@@ -165,6 +299,30 @@ struct GitHubClient {
             let date = df.date(from: dateStr) ?? Date()
             return CommitEntry(sha: sha, message: message, author: author, date: date)
         }
+    }
+
+    /// Fetch the changed-file summary for one commit. The list endpoint is
+    /// intentionally lightweight; details are loaded only when the user opens
+    /// the inspector so History stays fast.
+    func commitDetail(owner: String, repo: String, sha: String) async throws -> CommitDetail {
+        let encodedSHA = sha.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sha
+        let (data, _) = try await request("/repos/\(owner)/\(repo)/commits/\(encodedSHA)")
+        guard let obj = try json(data) as? [String: Any] else {
+            throw GitHubError.decoding("commit details")
+        }
+        let files = (obj["files"] as? [[String: Any]] ?? []).compactMap { file -> CommitFileChange? in
+            guard let path = file["filename"] as? String else { return nil }
+            return CommitFileChange(
+                path: path,
+                status: (file["status"] as? String) ?? "modified",
+                additions: (file["additions"] as? Int) ?? 0,
+                deletions: (file["deletions"] as? Int) ?? 0,
+                changes: (file["changes"] as? Int) ?? 0
+            )
+        }
+        return CommitDetail(sha: (obj["sha"] as? String) ?? sha,
+                            htmlURL: obj["html_url"] as? String,
+                            files: files)
     }
 
     // MARK: Connection test

@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// It deliberately lives above *both* the bar and the workspace rather than
 /// inside the bar. The bar is the shell's top safe-area inset, so anything the
-/// bar draws below its own 68pt band is visible but not clickable — the
+/// bar draws below its own 56pt band is visible but not clickable — the
 /// workspace wins the mouse. Hoisting the layer here is what makes an open menu
 /// a real menu: its rows take clicks, and a click anywhere else dismisses it.
 ///
@@ -86,7 +86,7 @@ struct TopBarPopoverLayer: View {
                 onAddSite: {
                     close()
                     destination = .sites
-                    NotificationCenter.default.post(name: .requestAddSite, object: nil)
+                    requestAddSite()
                 }
             )
         case .navigation:
@@ -175,7 +175,7 @@ struct TopBarPopoverLayer: View {
                     action: {
                         close()
                         destination = .sites
-                        NotificationCenter.default.post(name: .requestAddSite, object: nil)
+                        requestAddSite()
                     }
                 )
                 TopBarPopoverRow(
@@ -207,6 +207,14 @@ struct TopBarPopoverLayer: View {
             }
         }
         .frame(width: TopBarPopoverKind.overflow.width)
+    }
+
+    private func requestAddSite() {
+        // The Sites view is mounted after the destination changes. Defer the
+        // sheet request one run loop so it cannot be lost while switching tabs.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            NotificationCenter.default.post(name: .requestAddSite, object: nil)
+        }
     }
 
     // MARK: Behaviour

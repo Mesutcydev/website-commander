@@ -7,17 +7,15 @@ import SwiftUI
 struct BreathingRing: View {
     var tint: Color = Theme.accent
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var phase = false
+    @EnvironmentObject private var motion: AmbientMotionCoordinator
 
     var body: some View {
+        let phase = motion.phase(period: 2.8)
+        let enabled = motion.isRunning && !reduce
+        let breath = AmbientMotionMath.breathe(phase)
         Circle()
-            .stroke(tint.opacity(reduce ? 0.45 : 0.6), lineWidth: 2)
-            .scaleEffect(reduce ? 1.12 : (phase ? 1.3 : 1.0))
-            .opacity(reduce ? 0.45 : (phase ? 0 : 0.7))
-            .onAppear {
-                guard !reduce else { return }
-                withAnimation(.easeOut(duration: 1.1).repeatForever(autoreverses: false)) { phase = true }
-            }
+            .stroke(tint.opacity(enabled ? 0.18 * (1 - breath) : 0.45), lineWidth: 1.5)
+            .scaleEffect(enabled ? 1 + breath * 0.30 : 1.12)
     }
 }
 
@@ -28,18 +26,15 @@ struct OrbitDot: View {
     var tint: Color = Theme.accent
     var size: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var spin = false
+    @EnvironmentObject private var motion: AmbientMotionCoordinator
 
     var body: some View {
+        let phase = motion.phase(period: 4.8)
         Circle()
             .fill(tint)
             .frame(width: max(3, size * 0.16), height: max(3, size * 0.16))
             .offset(y: -size * 0.5)
-            .rotationEffect(.degrees(spin ? 360 : 0))
-            .onAppear {
-                guard !reduce else { return }
-                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { spin = true }
-            }
+            .rotationEffect(.degrees(reduce || !motion.isRunning ? 0 : phase * 360))
     }
 }
 
@@ -104,22 +99,76 @@ struct ProviderAvatar: View {
     }
 }
 
+// MARK: - Branded activity glyph
+
+/// The one activity symbol used for real agent work. The product mark remains
+/// recognizable at every state; only a small edge signal or state glyph
+/// changes, so this never becomes an oversized orb or generic spinner.
+struct AgentActivityGlyph: View {
+    let state: AgentState
+    var size: CGFloat = 18
+
+    @EnvironmentObject private var motion: AmbientMotionCoordinator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var tint: Color {
+        switch state {
+        case .awaitingApproval, .paused: return Theme.warning
+        case .failed: return Theme.danger
+        case .done: return Theme.success
+        default: return Theme.accent
+        }
+    }
+
+    var body: some View {
+        let phase = motion.phase(period: state.isActive ? 1.8 : 3.2)
+        let enabled = motion.isRunning && !reduceMotion
+        ZStack {
+            LivingTabMark(size: size * 0.9, style: .gradient, animated: false)
+                .rotationEffect(.degrees(state == .thinking && enabled ? phase * 10 : 0))
+
+            if state == .runningTool && enabled {
+                Rectangle()
+                    .fill(Theme.cyan.opacity(0.85))
+                    .frame(width: size * 0.48, height: 1.2)
+                    .offset(y: (phase * 2 - 1) * size * 0.26)
+            } else if state == .committing && state.isActive {
+                Circle()
+                    .trim(from: 0.10, to: enabled ? 0.52 : 0.32)
+                    .stroke(tint.opacity(enabled ? 0.85 : 0.5), style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+                    .frame(width: size, height: size)
+                    .rotationEffect(.degrees(enabled ? phase * 360 : -45))
+            } else if state == .awaitingApproval || state == .paused {
+                Circle()
+                    .stroke(tint.opacity(enabled ? 0.18 : 0.45), lineWidth: 1)
+                    .frame(width: size, height: size)
+                    .scaleEffect(enabled ? 1 + AmbientMotionMath.breathe(phase) * 0.16 : 1)
+            } else if state == .done || state == .failed {
+                Image(systemName: state == .done ? "checkmark" : "xmark")
+                    .font(.system(size: size * 0.38, weight: .bold))
+                    .foregroundStyle(tint)
+                    .background(Circle().fill(Theme.elevatedSurface).padding(-2))
+            }
+        }
+        .frame(width: size, height: size)
+        .animation(Motion.layout, value: state)
+        .accessibilityLabel(state.label)
+    }
+}
+
 // MARK: - Streaming caret
 
 /// A blinking text caret appended to the live, streaming assistant bubble.
 struct StreamingCaret: View {
     @Environment(\.accessibilityReduceMotion) private var reduce
-    @State private var on = false
+    @EnvironmentObject private var motion: AmbientMotionCoordinator
 
     var body: some View {
+        let phase = motion.phase(period: 0.9)
         RoundedRectangle(cornerRadius: 1, style: .continuous)
             .fill(Theme.accent)
             .frame(width: 2, height: 13)
-            .opacity(reduce ? 0.7 : (on ? 1 : 0.15))
-            .onAppear {
-                guard !reduce else { return }
-                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) { on = true }
-            }
+            .opacity(reduce || !motion.isRunning ? 0.7 : (phase < 0.5 ? 1 : 0.15))
     }
 }
 
@@ -135,6 +184,7 @@ private struct ActivityBorder: ViewModifier {
     let cornerRadius: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduce
+    @EnvironmentObject private var motion: AmbientMotionCoordinator
 
     func body(content: Content) -> some View {
         content
@@ -158,12 +208,11 @@ private struct ActivityBorder: ViewModifier {
             if reduce {
                 stroked(Theme.Activity.staticTint).transition(.opacity)
             } else {
-                // The gradient's angle is derived from the timeline's clock, so
-                // the loop is continuous and survives view updates mid-rotation.
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
-                    stroked(Theme.Activity.gradient(angle: Self.angle(at: context.date)))
-                }
-                .transition(.opacity)
+                stroked(Theme.Activity.gradient(
+                    angle: .degrees(motion.isRunning
+                                    ? motion.phase(period: Theme.Activity.period) * 360
+                                    : 0)))
+                    .transition(.opacity)
             }
         }
     }
@@ -185,11 +234,6 @@ private struct ActivityBorder: ViewModifier {
             .inset(by: -Theme.Activity.haloWidth)
     }
 
-    private static func angle(at date: Date) -> Angle {
-        let period = Theme.Activity.period
-        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period)
-        return .degrees(phase / period * 360)
-    }
 }
 
 extension View {

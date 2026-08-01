@@ -90,6 +90,8 @@ final class AgentEngine: ObservableObject {
     @Published var sessionCostUSD: Double = 0
     @Published private(set) var lastTurnCostUSD: Double = 0
     @Published var lastCommitNote: String?
+    @Published var lastDeploymentWarning: String?
+    @Published var lastApprovalError: String?
     @Published private(set) var isRunActive = false
     @Published private(set) var canContinue = false
     @Published private(set) var lastStopReason: String?
@@ -191,8 +193,11 @@ final class AgentEngine: ObservableObject {
 
     // MARK: GitHub access
 
-    private var gitHub: GitHubClient? {
-        guard let token = settings.resolvedGitHubToken(for: settings.activeWorkspace),
+    /// Resolve credentials off the main actor. Named GitHub accounts live in
+    /// the Keychain, and a Keychain prompt must never block a tool turn or UI
+    /// layout while the engine is deciding which repository to use.
+    private func gitHub(for workspace: SiteWorkspace) async -> GitHubClient? {
+        guard let token = await settings.resolvedGitHubToken(forAsync: workspace),
               !token.isEmpty else { return nil }
         return GitHubClient(token: token)
     }
@@ -218,6 +223,8 @@ final class AgentEngine: ObservableObject {
         state = .idle
         lastError = nil
         lastCommitNote = nil
+        lastDeploymentWarning = nil
+        lastApprovalError = nil
         canContinue = false
         lastStopReason = nil
         lastTurnCostUSD = 0
@@ -241,6 +248,9 @@ final class AgentEngine: ObservableObject {
         pendingChanges = []
         state = .idle
         lastError = nil
+        lastCommitNote = nil
+        lastDeploymentWarning = nil
+        lastApprovalError = nil
         canContinue = false
         lastStopReason = nil
         clearLiveStreams()
@@ -531,6 +541,7 @@ final class AgentEngine: ObservableObject {
     func send(_ text: String, attachments: [Attachment] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        guard !isRunActive else { return }
         guard settings.activeWorkspace != nil else {
             lastError = "Connect a website first (Settings → GitHub, then + New Site)."
             return
@@ -539,12 +550,9 @@ final class AgentEngine: ObservableObject {
             lastError = "No AI provider configured. Add an API key in Settings."
             return
         }
-        guard gitHub != nil else {
-            lastError = "Add a GitHub token in Settings → GitHub."
-            return
-        }
-
         lastError = nil
+        lastApprovalError = nil
+        lastDeploymentWarning = nil
         transcript.append(ChatMessage(role: .user, text: trimmed, attachments: attachments))
         // A prompt is worth keeping even if the app dies mid-generation.
         flushConversation()
@@ -579,7 +587,7 @@ final class AgentEngine: ObservableObject {
 
     func continueRun() {
         guard canContinue, let provider = currentProvider(),
-              settings.activeWorkspace != nil, gitHub != nil else { return }
+              settings.activeWorkspace != nil else { return }
         continueRun(using: provider)
     }
 
@@ -593,6 +601,7 @@ final class AgentEngine: ObservableObject {
 
     func dismissRecovery() {
         lastError = nil
+        lastApprovalError = nil
         canContinue = false
         lastStopReason = nil
     }
@@ -652,9 +661,6 @@ final class AgentEngine: ObservableObject {
         }
         guard let provider = currentProvider() else {
             return HeadlessResult(ok: false, reply: "No AI provider configured (need an API key).", committed: 0, staged: 0)
-        }
-        guard gitHub != nil else {
-            return HeadlessResult(ok: false, reply: "No GitHub token configured.", committed: 0, staged: 0)
         }
         lastError = nil
         transcript.append(ChatMessage(role: .user, text: trimmed))
@@ -933,8 +939,12 @@ final class AgentEngine: ObservableObject {
             }
         case "browser_navigate":
             guard let url = args["url"] as? String else { return ToolResult(text: "Missing url.", success: false) }
-            browserController.navigate(url)
-            return ToolResult(text: "Navigating to \(url).", success: true)
+            do {
+                try browserController.navigate(url)
+                return ToolResult(text: "Navigating to \(url).", success: true)
+            } catch {
+                return ToolResult(text: error.localizedDescription, success: false)
+            }
         case "browser_click":
             guard let selector = args["selector"] as? String else { return ToolResult(text: "Missing selector.", success: false) }
             do { return ToolResult(text: try await browserController.click(selector: selector), success: true) }
@@ -953,8 +963,11 @@ final class AgentEngine: ObservableObject {
             break
         }
 
-        // Repository tools need GitHub.
-        guard let gitHub else { return ToolResult(text: "No GitHub token configured.", success: false) }
+        // Repository tools need GitHub. Resolve the token for the workspace
+        // captured at the start of the turn, not whichever site is active now.
+        guard let gitHub = await gitHub(for: workspace) else {
+            return ToolResult(text: "No GitHub token configured for \(workspace.name).", success: false)
+        }
 
         switch call.name {
         case "list_files":
@@ -1016,11 +1029,14 @@ final class AgentEngine: ObservableObject {
                             oldContent: String?, baseSHA: String?) {
         let change = PendingChange(path: path, oldContent: oldContent, newContent: content,
                                    message: message, risks: SecurityScanner.scan(content),
-                                   baseSHA: baseSHA)
+                                   baseSHA: baseSHA, workspaceID: settings.activeWorkspace?.id)
         if let index = pendingChanges.firstIndex(where: { $0.path == path }) {
             pendingChanges[index].newContent = content
             pendingChanges[index].message = message
             pendingChanges[index].risks = SecurityScanner.scan(content)
+            pendingChanges[index].oldContent = oldContent
+            pendingChanges[index].baseSHA = baseSHA
+            pendingChanges[index].workspaceID = change.workspaceID
         } else {
             pendingChanges.append(change)
         }
@@ -1049,10 +1065,23 @@ final class AgentEngine: ObservableObject {
     /// Commit a single staged change to GitHub.
     @discardableResult
     func approve(_ change: PendingChange) async -> Bool {
-        guard let workspace = settings.activeWorkspace, let gitHub else {
-            lastError = "Missing workspace or GitHub token."
+        lastApprovalError = nil
+        lastDeploymentWarning = nil
+        guard let workspace = workspace(for: change) else {
+            let message = "This change belongs to a site that is no longer connected."
+            lastApprovalError = message
+            lastError = message
+            state = .failed
             return false
         }
+        guard let token = await settings.resolvedGitHubToken(forAsync: workspace), !token.isEmpty else {
+            let message = "GitHub is not connected for \(workspace.name). Add or select its token in Settings → GitHub, then try again."
+            lastApprovalError = message
+            lastError = message
+            state = .failed
+            return false
+        }
+        let gitHub = GitHubClient(token: token)
         state = .committing
         do {
             try await gitHub.commitFile(owner: workspace.gitOwner, repo: workspace.gitRepo,
@@ -1061,11 +1090,17 @@ final class AgentEngine: ObservableObject {
                                         sha: change.baseSHA)
             pendingChanges.removeAll { $0.id == change.id }
             let deploy = await DeploymentService.trigger(for: workspace)
-            lastCommitNote = "\(workspace.deployment.redeployNote) \(deploy.note)"
+            lastCommitNote = "Committed \(change.path). \(workspace.deployment.redeployNote)"
+            if !deploy.isSuccess {
+                lastDeploymentWarning = deploy.note
+            }
+            lastError = nil
             state = pendingChanges.isEmpty ? .done : .awaitingApproval
             return true
         } catch {
-            lastError = error.localizedDescription
+            let message = error.localizedDescription
+            lastApprovalError = message
+            lastError = message
             state = .failed
             return false
         }
@@ -1077,9 +1112,21 @@ final class AgentEngine: ObservableObject {
         let changes = pendingChanges
         var allOK = true
         for change in changes {
-            if !(await approve(change)) { allOK = false }
+            if !(await approve(change)) {
+                allOK = false
+                break
+            }
         }
         return allOK
+    }
+
+    /// Resolve the repository captured when the edit was staged. Older staged
+    /// changes have no workspace ID, so they fall back to the active site.
+    private func workspace(for change: PendingChange) -> SiteWorkspace? {
+        if let id = change.workspaceID {
+            return settings.workspaces.first { $0.id == id }
+        }
+        return settings.activeWorkspace
     }
 
     func discard(_ change: PendingChange) {

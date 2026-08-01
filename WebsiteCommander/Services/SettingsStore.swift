@@ -165,6 +165,11 @@ final class SettingsStore: ObservableObject {
     /// never read the Keychain while it is laying out.
     @Published private(set) var pairedProviderIDs: Set<String> = []
 
+    /// Keychain-backed GitHub availability, published after a background probe.
+    /// Views use these values instead of reading the Keychain during layout.
+    @Published private(set) var hasDefaultGitHubToken = false
+    @Published private(set) var availableGitHubCredentialIDs: Set<UUID> = []
+
     func refreshPairedProviders() {
         let providerIDs = ProviderRegistry.catalog.map(\.id)
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -194,6 +199,16 @@ final class SettingsStore: ObservableObject {
         Keychain.getGitHubToken(id)
     }
 
+    /// Resolve one account's token without blocking the main actor. Use this
+    /// for repository requests started by views or async workflows.
+    func tokenForCredentialAsync(_ id: UUID?) async -> String? {
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: Keychain.getGitHubToken(id))
+            }
+        }
+    }
+
     // MARK: Readiness
     //
     // A Keychain read is synchronous and can block indefinitely — macOS puts up
@@ -210,16 +225,33 @@ final class SettingsStore: ObservableObject {
     /// Recomputes `readyWorkspaceIDs`. Cheap to call; safe to call often.
     func refreshReadiness() {
         let probes = workspaces.map { ($0.id, $0.githubCredentialID) }
+        let credentialIDs = githubAccounts.map(\.id)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let fallback = Keychain.getGitHubToken(nil) ?? ""
             var ready = Set<UUID>()
+            var available = Set<UUID>()
+            for credentialID in credentialIDs {
+                if !(Keychain.getGitHubToken(credentialID) ?? "").isEmpty {
+                    available.insert(credentialID)
+                }
+            }
             for (workspaceID, credentialID) in probes {
-                let specific = credentialID.flatMap { Keychain.getGitHubToken($0) } ?? ""
-                if !specific.isEmpty || !fallback.isEmpty { ready.insert(workspaceID) }
+                let token: String
+                if let credentialID {
+                    // A workspace assigned to a named account must not appear
+                    // ready because a different default account happens to
+                    // exist. Approval uses the same exact-account rule.
+                    token = Keychain.getGitHubToken(credentialID) ?? ""
+                } else {
+                    token = fallback
+                }
+                if !token.isEmpty { ready.insert(workspaceID) }
             }
             DispatchQueue.main.async {
-                guard let self, self.readyWorkspaceIDs != ready else { return }
+                guard let self else { return }
                 self.readyWorkspaceIDs = ready
+                self.hasDefaultGitHubToken = !fallback.isEmpty
+                self.availableGitHubCredentialIDs = available
             }
         }
     }
@@ -233,25 +265,41 @@ final class SettingsStore: ObservableObject {
     /// (view `task`s, engine steps) must use this rather than the synchronous
     /// variant, so a Keychain prompt can never freeze the UI.
     func resolvedGitHubToken(forAsync workspace: SiteWorkspace?) async -> String? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                continuation.resume(returning: self?.resolvedGitHubToken(for: workspace))
+        let credentialID = workspace?.githubCredentialID
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                if let credentialID,
+                   let token = Keychain.getGitHubToken(credentialID),
+                   !token.isEmpty {
+                    continuation.resume(returning: token)
+                } else {
+                    let fallback = credentialID == nil ? Keychain.getGitHubToken(nil) : nil
+                    continuation.resume(returning: fallback)
+                }
             }
         }
     }
 
-    /// The token to use for a workspace: its assigned account, else the default.
+    /// The token to use for a workspace. Explicitly assigned accounts never
+    /// fall back to another account, which prevents commits landing under the
+    /// wrong credential when a named token expires or is removed.
     func resolvedGitHubToken(for workspace: SiteWorkspace?) -> String? {
-        if let id = workspace?.githubCredentialID, let token = token(forCredential: id), !token.isEmpty {
-            return token
+        if let id = workspace?.githubCredentialID {
+            let token = token(forCredential: id)
+            return token?.isEmpty == false ? token : nil
         }
         return githubToken
     }
 
     /// True when at least one GitHub token (default or any account) is present.
     var hasAnyGitHubToken: Bool {
-        if !(githubToken ?? "").isEmpty { return true }
-        return githubAccounts.contains { !(token(forCredential: $0.id) ?? "").isEmpty }
+        hasDefaultGitHubToken || !availableGitHubCredentialIDs.isEmpty
+    }
+
+    /// Non-blocking token availability for a specific account.
+    func hasGitHubToken(forCredential id: UUID?) -> Bool {
+        guard let id else { return hasDefaultGitHubToken }
+        return availableGitHubCredentialIDs.contains(id)
     }
 
     /// Add a named GitHub account, storing its token in the Keychain.
@@ -277,7 +325,7 @@ final class SettingsStore: ObservableObject {
     /// All accounts as options including the implicit default first.
     var accountOptions: [AccountOption] {
         var list: [AccountOption] = []
-        if !(githubToken ?? "").isEmpty { list.append(AccountOption(id: nil, name: "Default account")) }
+        if hasDefaultGitHubToken { list.append(AccountOption(id: nil, name: "Default account")) }
         list.append(contentsOf: githubAccounts.map { AccountOption(id: $0.id, name: $0.displayName) })
         return list
     }

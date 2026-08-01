@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 /// The Mac shell: one compact application bar over a full-width workspace.
 ///
@@ -7,7 +8,7 @@ import AppKit
 /// brand, the project, the five destinations, agent status, the model, the view
 /// controls, the primary action, and overflow, and the workspace beneath it owns
 /// the entire window width. The bar is the shell's top safe-area inset rather
-/// than an absolutely positioned layer, so the rows really are `[68, flexible]`
+/// than an absolutely positioned layer, so the rows really are `[56, flexible]`
 /// and the bar can still draw its popovers over the workspace.
 struct RootView: View {
 
@@ -31,6 +32,8 @@ struct RootView: View {
     @State private var showUpdateAlert = false
     @State private var showUpdateError = false
     @State private var showUpToDate = false
+    @State private var showVSCodeError = false
+    @State private var vscodeErrorMessage = ""
 
     private var current: Destination { destination ?? .commandCenter }
 
@@ -49,6 +52,7 @@ struct RootView: View {
             }
         }
         .environment(\.destination, $destination)
+        .background { GlassWindowConfigurator() }
         .onAppear {
             destination = Destination(rawValue: persistedDestination) ?? .commandCenter
         }
@@ -76,9 +80,28 @@ struct RootView: View {
                 engine.prefilledPrompt = prompt
                 destination = .agent
             })
+            .presentationBackground(.regularMaterial)
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestDebug)) { _ in
             showDebug = true
+        }
+        .onReceive(routedCommandNotifications) { notification in
+            switch notification.name {
+            case .requestOpenInVSCode:
+                openActiveSiteInVSCode()
+            case .requestRefreshPreview:
+                route(to: .preview, then: .refreshPreview)
+            case .requestAgentPreviewFromEngine:
+                route(to: .agent, then: .requestAgentPreview)
+            case .requestAgentSendFromMenu:
+                route(to: .agent, then: .requestAgentSend)
+            case .requestAgentStopFromMenu:
+                route(to: .agent, then: .requestAgentStop)
+            case .requestApproveAllFromMenu:
+                route(to: .agent, then: .requestApproveAll)
+            default:
+                break
+            }
         }
         .sheet(isPresented: $showPalette) {
             CommandPaletteView(
@@ -95,12 +118,14 @@ struct RootView: View {
                     }
                 }
             )
+            .presentationBackground(.regularMaterial)
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestPalette)) { _ in
             showPalette = true
         }
         .sheet(isPresented: $showConversations) {
             ConversationsSheet()
+                .presentationBackground(.regularMaterial)
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestConversations)) { _ in
             showConversations = true
@@ -143,6 +168,11 @@ struct RootView: View {
         } message: {
             Text(updater.lastError ?? "")
         }
+        .alert("Couldn't open VS Code", isPresented: $showVSCodeError) {
+                Button("OK", role: .cancel) { showVSCodeError = false }
+            } message: {
+                Text(vscodeErrorMessage)
+            }
         .task(id: settings.hasCompletedOnboarding) {
             guard settings.hasCompletedOnboarding else { return }
             // One quiet check after launch — never polls, never errors loudly.
@@ -155,12 +185,58 @@ struct RootView: View {
         rel.sha256.count == 64 && rel.url.lowercased().hasSuffix(".zip")
     }
 
+    private var routedCommandNotifications: AnyPublisher<Notification, Never> {
+        let center = NotificationCenter.default
+        return center.publisher(for: .requestOpenInVSCode)
+            .merge(with: center.publisher(for: .requestRefreshPreview))
+            .merge(with: center.publisher(for: .requestAgentPreviewFromEngine))
+            .merge(with: center.publisher(for: .requestAgentSendFromMenu))
+            .merge(with: center.publisher(for: .requestAgentStopFromMenu))
+            .merge(with: center.publisher(for: .requestApproveAllFromMenu))
+            .eraseToAnyPublisher()
+    }
+
+    private func route(to target: Destination, then notification: Notification.Name) {
+        destination = target
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            NotificationCenter.default.post(name: notification, object: nil)
+        }
+    }
+
+    private func openActiveSiteInVSCode() {
+        guard let workspace = settings.activeWorkspace else {
+            presentVSCodeError("Connect a website first, then try again.")
+            return
+        }
+        Task {
+            guard let token = await settings.resolvedGitHubToken(forAsync: workspace), !token.isEmpty else {
+                presentVSCodeError("Add a GitHub token in Settings → GitHub, then try again.")
+                return
+            }
+            do {
+                let path = try await LocalWorkspaceStore.ensureClone(workspace, token: token)
+                if !VSCodeBridge.open(folder: path) {
+                    presentVSCodeError("VS Code could not be opened. Install VS Code or enable its `code` command, then try again.")
+                }
+            } catch {
+                presentVSCodeError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func presentVSCodeError(_ message: String) {
+        vscodeErrorMessage = message
+        showVSCodeError = true
+    }
+
     // MARK: App shell
 
     private var appShell: some View {
-        workspace
+        ZStack {
+            GlassWorkspaceBackground()
+            workspace
+        }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-            .background(Theme.canvas)
             .safeAreaInset(edge: .top, spacing: 0) {
                 TopBar(
                     metrics: metrics,

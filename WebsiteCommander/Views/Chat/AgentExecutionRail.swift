@@ -12,6 +12,7 @@ struct AgentExecutionRail: View {
     let pendingChanges: [PendingChange]
     let state: AgentState
     var onReview: (PendingChange) -> Void
+    @State private var isExpanded = true
 
     /// True when the rail has something real to show.
     static func hasContent(events: [ToolEvent], pendingChanges: [PendingChange]) -> Bool {
@@ -30,37 +31,39 @@ struct AgentExecutionRail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if !running.isEmpty {
-                        section(String(localized: "Current operation")) {
-                            ForEach(running) { event in
-                                eventRow(event)
+            if isExpanded {
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.Space.l) {
+                        if !running.isEmpty {
+                            section(String(localized: "Now")) {
+                                ForEach(running) { event in
+                                    eventRow(event)
+                                }
+                            }
+                        }
+                        if !finished.isEmpty {
+                            section("Activity · \(finished.count)") {
+                                ForEach(finished) { event in
+                                    eventRow(event)
+                                }
+                            }
+                        }
+                        if !touchedFiles.isEmpty {
+                            section("Changes ready") {
+                                ForEach(touchedFiles) { change in
+                                    fileRow(change)
+                                }
                             }
                         }
                     }
-                    if !finished.isEmpty {
-                        section(String(localized: "Completed")) {
-                            ForEach(finished) { event in
-                                eventRow(event)
-                            }
-                        }
-                    }
-                    if !touchedFiles.isEmpty {
-                        section(String(localized: "Files touched")) {
-                            ForEach(touchedFiles) { change in
-                                fileRow(change)
-                            }
-                        }
-                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .background(Theme.secondarySurface.opacity(0.55))
+        .background { GlassPaneBackground() }
         .overlay(alignment: .leading) {
             Rectangle()
                 .fill(Theme.borderSubtle)
@@ -73,28 +76,48 @@ struct AgentExecutionRail: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.Chrome.accent)
-            Text("Activity")
-                .font(Theme.ui(13, .semibold))
-                .foregroundStyle(Theme.Chrome.textPrimary)
-            Spacer(minLength: 8)
-            if !pendingChanges.isEmpty {
-                Text("\(pendingChanges.count)")
-                    .font(Theme.ui(11, .semibold))
-                    .foregroundStyle(Theme.warning)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Theme.warning.opacity(0.14), in: Capsule())
-                    .accessibilityLabel("\(pendingChanges.count) changes awaiting approval")
-            } else if state.isActive {
-                ProgressView().controlSize(.mini)
+        Button {
+            withAnimation(Motion.smooth) { isExpanded.toggle() }
+        } label: {
+            HStack(spacing: 7) {
+                AgentActivityGlyph(state: state, size: 18)
+                Text(activityTitle)
+                    .font(Theme.ui(13, .semibold))
+                    .foregroundStyle(Theme.Chrome.textPrimary)
+                Spacer(minLength: 8)
+                if !pendingChanges.isEmpty {
+                    Text("\(pendingChanges.count)")
+                        .font(Theme.ui(11, .semibold))
+                        .foregroundStyle(Theme.warning)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Theme.warning.opacity(0.14), in: Capsule())
+                        .accessibilityLabel("\(pendingChanges.count) changes awaiting approval")
+                } else if state.isActive {
+                    ProgressView().controlSize(.mini)
+                }
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Theme.Chrome.textMuted)
             }
         }
-        .padding(.horizontal, 14)
-        .frame(height: 40)
+        .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .frame(height: Theme.Height.pageHeader)
+        .background(Theme.standardSurface)
+        .overlay(alignment: .bottom) {
+            AmbientProgressTrack(tint: state.isActive ? Theme.accent : Theme.success,
+                                 active: state.isActive)
+        }
+        .animation(Motion.gentle, value: activityTitle)
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint("Shows the agent's current activity and changes")
+    }
+
+    private var activityTitle: String {
+        if state.isActive { return "Working" }
+        if events.isEmpty { return "Activity" }
+        return "Activity · \(events.count) steps"
     }
 
     // MARK: Sections
@@ -176,7 +199,7 @@ struct AgentExecutionRail: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.elevatedSurface.opacity(0.6),
+            .background(Theme.standardSurface,
                         in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }

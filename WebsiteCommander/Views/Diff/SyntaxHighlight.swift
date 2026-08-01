@@ -109,11 +109,11 @@ enum SyntaxHighlight {
         for token in tokens(line, lang: lang) {
             let color: Color
             switch token.kind {
-            case .comment: color = .green
-            case .string: color = .orange
-            case .number: color = .blue
-            case .keyword: color = .purple
-            case .plain: color = .primary
+            case .comment: color = Theme.codeComment
+            case .string: color = Theme.codeString
+            case .number: color = Theme.codeNumber
+            case .keyword: color = Theme.codeKeyword
+            case .plain: color = Theme.textPrimary
             }
             result = result + Text(token.text).foregroundColor(color)
         }

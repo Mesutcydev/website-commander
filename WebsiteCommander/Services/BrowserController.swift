@@ -6,11 +6,15 @@ import SwiftUI
 enum BrowserError: LocalizedError {
     case notOpen
     case evaluationFailed(String)
+    case invalidURL
+    case unsupportedScheme
 
     var errorDescription: String? {
         switch self {
         case .notOpen: return "The live preview could not open. Check that this site has a valid live URL."
         case .evaluationFailed(let m): return "Browser script failed: \(m)"
+        case .invalidURL: return "That preview URL is invalid. Use a full http(s) address."
+        case .unsupportedScheme: return "For safety, preview navigation only supports http and https URLs."
         }
     }
 }
@@ -40,7 +44,7 @@ final class BrowserController: ObservableObject {
     /// the live view, so model tools do not fail because of UI presentation.
     func ensureAvailable() async -> Bool {
         if isAvailable { return true }
-        NotificationCenter.default.post(name: .requestAgentPreview, object: nil)
+        NotificationCenter.default.post(name: .requestAgentPreviewFromEngine, object: nil)
         for _ in 0..<30 {
             if isAvailable { return true }
             try? await Task.sleep(for: .milliseconds(100))
@@ -140,8 +144,16 @@ final class BrowserController: ObservableObject {
 
     // MARK: CONTROL
 
-    func navigate(_ urlString: String) {
-        guard let webView, let url = URL(string: urlString) else { return }
+    func navigate(_ urlString: String) throws {
+        guard let url = URL(string: urlString) else {
+            throw BrowserError.invalidURL
+        }
+        guard let webView else { throw BrowserError.notOpen }
+        guard let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host != nil else {
+            throw BrowserError.unsupportedScheme
+        }
         webView.load(URLRequest(url: url))
         currentURL = url
     }

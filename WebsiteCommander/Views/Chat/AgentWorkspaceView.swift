@@ -5,16 +5,19 @@ import SwiftUI
 /// flex basis or invisible hit-testing surface behind.
 struct WorkspaceLayout {
     static let agentMinimum: CGFloat = 360
+    static let agentDefault: CGFloat = 420
+    static let agentMaximum: CGFloat = 520
     static let previewMinimum: CGFloat = 520
     static let dividerWidth: CGFloat = 8
     static let compactBreakpoint: CGFloat = agentMinimum + previewMinimum + dividerWidth + 48
 
     static func defaultAgentWidth(in available: CGFloat) -> CGFloat {
-        clampedAgentWidth(available * 0.38, in: available)
+        clampedAgentWidth(agentDefault, in: available)
     }
 
     static func clampedAgentWidth(_ proposed: CGFloat, in available: CGFloat) -> CGFloat {
-        let maximum = max(agentMinimum, available - previewMinimum - dividerWidth)
+        let availableMaximum = max(agentMinimum, available - previewMinimum - dividerWidth)
+        let maximum = min(agentMaximum, availableMaximum)
         return min(max(proposed, agentMinimum), maximum)
     }
 }
@@ -37,7 +40,7 @@ struct AgentWorkspaceView: View {
             workspaceBody(width: proxy.size.width)
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         }
-        .background(Theme.canvas)
+        .background { GlassWorkspaceBackground() }
         .onReceive(NotificationCenter.default.publisher(for: .requestAgentPreview)) { _ in
             showsPreview = true
         }
@@ -69,7 +72,7 @@ struct AgentWorkspaceView: View {
             showsToolbarControls: false
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.workspaceSurface)
+        .background { GlassPaneBackground() }
     }
 
     private func splitWorkspace(available: CGFloat) -> some View {
@@ -88,7 +91,7 @@ struct AgentWorkspaceView: View {
             )
             .frame(width: agentWidth)
             .frame(minWidth: WorkspaceLayout.agentMinimum, maxHeight: .infinity)
-            .background(Theme.workspaceSurface)
+            .background { GlassPaneBackground() }
 
             splitter(currentWidth: agentWidth, available: available)
 
@@ -99,7 +102,7 @@ struct AgentWorkspaceView: View {
 
     private func splitter(currentWidth: CGFloat, available: CGFloat) -> some View {
         Rectangle()
-            .fill(Theme.secondarySurface)
+            .fill(Theme.recessedSurface)
             .frame(width: WorkspaceLayout.dividerWidth)
             .overlay {
                 Capsule()

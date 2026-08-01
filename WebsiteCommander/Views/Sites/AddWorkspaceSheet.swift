@@ -7,6 +7,7 @@ struct AddWorkspaceSheet: View {
 
     @EnvironmentObject var settings: SettingsStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openSettings) private var openSettings
 
     enum Source: String, CaseIterable { case pick = "My Repos", manual = "Manual" }
     @State private var source: Source = .pick
@@ -28,11 +29,11 @@ struct AddWorkspaceSheet: View {
     @State private var deployHookURL = ""
     @State private var selectedCredentialID: UUID? = nil
     @State private var accentHex: String? = nil
+    @State private var validationMessage: String?
 
     /// Whether the currently selected GitHub account has a usable token.
     private var hasToken: Bool {
-        let t = settings.token(forCredential: selectedCredentialID) ?? ""
-        return !t.isEmpty
+        settings.hasGitHubToken(forCredential: selectedCredentialID)
     }
 
     var body: some View {
@@ -63,12 +64,23 @@ struct AddWorkspaceSheet: View {
             footer
         }
         .frame(width: 600, height: 700)
-        .task { if source == .pick { await loadRepos() } }
+        .task {
+            selectInitialAccount()
+            if source == .pick { await loadRepos() }
+        }
         .onChange(of: source) { _, new in
             if new == .pick { Task { await loadRepos() } }
         }
         .onChange(of: selectedCredentialID) { _, _ in
             if source == .pick { Task { await loadRepos() } }
+        }
+        .onChange(of: settings.accountOptions) { _, options in
+            guard !options.isEmpty,
+                  !options.contains(where: { $0.id == selectedCredentialID }) else { return }
+            selectedCredentialID = options[0].id
+        }
+        .onChange(of: validationSignature) { _, _ in
+            validationMessage = nil
         }
     }
 
@@ -92,6 +104,11 @@ struct AddWorkspaceSheet: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
+                if hasToken {
+                    Label("Token connected", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Theme.success)
+                }
             }
         }
     }
@@ -124,6 +141,10 @@ struct AddWorkspaceSheet: View {
                         Label("Create a token", systemImage: "arrow.up.forward.app")
                             .font(.callout.weight(.semibold))
                     }
+                    Button { openSettings() } label: {
+                        Label("Open Settings", systemImage: "gearshape")
+                    }
+                    .buttonStyle(.plain)
                     HelpButton(title: "Creating a GitHub token",
                                message: "Generate a classic Personal Access Token with the `repo` scope (it grants read & write to your repositories). Paste it into Settings → GitHub, then come back here.",
                                links: [("github.com/settings/tokens", "https://github.com/settings/tokens")])
@@ -336,6 +357,13 @@ struct AddWorkspaceSheet: View {
     private var footer: some View {
         HStack {
             Button("Cancel") { dismiss() }
+            if let validationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Theme.danger)
+                    .lineLimit(2)
+                    .frame(maxWidth: 280, alignment: .leading)
+            }
             Spacer()
             Button("Add Website") { save() }
                 .buttonStyle(.primary)
@@ -345,7 +373,41 @@ struct AddWorkspaceSheet: View {
     }
 
     private var canSave: Bool {
-        !name.isEmpty && !owner.isEmpty && !repo.isEmpty
+        validationErrors.isEmpty
+    }
+
+    private var validationSignature: String {
+        [name, owner, repo, branch, liveURL, deployHookURL, selectedCredentialID?.uuidString ?? ""]
+            .joined(separator: "\u{1F}")
+    }
+
+    private var validationErrors: [String] {
+        var errors: [String] = []
+        if !hasToken { errors.append("Connect a GitHub account") }
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            errors.append("Add a display name")
+        }
+        if !isGitHubIdentifier(owner) { errors.append("Enter a valid GitHub owner") }
+        if !isGitHubIdentifier(repo) { errors.append("Enter a valid repository name") }
+        let trimmedBranch = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedBranch.isEmpty || trimmedBranch.contains(where: { $0.isWhitespace }) || trimmedBranch.contains("..") {
+            errors.append("Enter a valid branch")
+        }
+        if !liveURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           SiteWorkspace.normalizedLiveURL(liveURL) == nil {
+            errors.append("Use a valid http(s) live URL")
+        }
+        if !deployHookURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           SiteWorkspace.normalizedLiveURL(deployHookURL) == nil {
+            errors.append("Use a valid http(s) deploy hook URL")
+        }
+        return errors
+    }
+
+    private func isGitHubIdentifier(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return trimmed.allSatisfy { $0.isLetter || $0.isNumber || "-_.".contains($0) }
     }
 
     private func fieldWithHelp(_ label: String, text: Binding<String>, placeholder: String, help: HelpButton) -> some View {
@@ -358,27 +420,51 @@ struct AddWorkspaceSheet: View {
     }
 
     private func save() {
+        guard validationErrors.isEmpty else {
+            validationMessage = validationErrors.first
+            return
+        }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedOwner = owner.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRepo = repo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBranch = branch.trimmingCharacters(in: .whitespacesAndNewlines)
         var workspace = SiteWorkspace(
-            name: name, gitOwner: owner, gitRepo: repo, gitBranch: branch.isEmpty ? "main" : branch,
+            name: trimmedName, gitOwner: trimmedOwner, gitRepo: trimmedRepo,
+            gitBranch: trimmedBranch.isEmpty ? "main" : trimmedBranch,
             githubCredentialID: selectedCredentialID,
             techStack: techStack, deployment: deployment,
             defaultModel: defaultModel, customRules: customRules,
             accentHex: accentHex)
         let trimmedURL = liveURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedURL.isEmpty {
-            workspace.deploymentConfig["liveURL"] = trimmedURL
+        if let normalizedURL = SiteWorkspace.normalizedLiveURL(trimmedURL) {
+            workspace.deploymentConfig["liveURL"] = normalizedURL.absoluteString
         } else if let selectedRepo, let homepage = selectedRepo.homepage {
-            workspace.deploymentConfig["liveURL"] = homepage
+            if let normalizedHomepage = SiteWorkspace.normalizedLiveURL(homepage) {
+                workspace.deploymentConfig["liveURL"] = normalizedHomepage.absoluteString
+            }
         }
         settings.addWorkspace(workspace)
-        if !deployHookURL.trimmingCharacters(in: .whitespaces).isEmpty {
-            DeploymentService.setHookURL(deployHookURL, for: workspace.id)
+        let trimmedHook = deployHookURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let normalizedHook = SiteWorkspace.normalizedLiveURL(trimmedHook) {
+            DeploymentService.setHookURL(normalizedHook.absoluteString, for: workspace.id)
         }
         dismiss()
     }
 
+    private func selectInitialAccount() {
+        let options = settings.accountOptions
+        guard !options.isEmpty,
+              !options.contains(where: { $0.id == selectedCredentialID }) else { return }
+        if let workspaceAccount = settings.activeWorkspace?.githubCredentialID,
+           options.contains(where: { $0.id == workspaceAccount }) {
+            selectedCredentialID = workspaceAccount
+        } else {
+            selectedCredentialID = options[0].id
+        }
+    }
+
     private func loadRepos() async {
-        guard let token = settings.token(forCredential: selectedCredentialID), !token.isEmpty else {
+        guard let token = await settings.tokenForCredentialAsync(selectedCredentialID), !token.isEmpty else {
             loadError = "Select a GitHub account with a token (add one in Settings → GitHub)."
             return
         }

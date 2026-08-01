@@ -175,6 +175,31 @@ enum InspectorScript {
         send({ type: 'console', level: 'error', text: (e.message || 'error') + ' @ ' + (e.filename || '') + ':' + (e.lineno || '') });
       });
 
+      // Static resource capture. fetch/XHR hooks do not see scripts, styles,
+      // images, fonts, or the document itself. Resource Timing gives the
+      // inspector a useful request inventory even when a subresource fails
+      // before JavaScript gets a chance to observe it.
+      var reportedResources = {};
+      var reportResource = function(entry) {
+        if (!entry || !entry.name || reportedResources[entry.name]) { return; }
+        reportedResources[entry.name] = true;
+        send({ type: 'network', method: 'GET', url: entry.name, status: null,
+               duration: Math.round(entry.duration || 0),
+               size: entry.transferSize || entry.encodedBodySize || null });
+      };
+      var reportResources = function() {
+        try {
+          performance.getEntriesByType('resource').forEach(reportResource);
+        } catch (e) {}
+      };
+      try {
+        if (window.PerformanceObserver) {
+          new PerformanceObserver(function(list) {
+            list.getEntries().forEach(reportResource);
+          }).observe({ entryTypes: ['resource'] });
+        }
+      } catch (e) {}
+
       // Fetch capture
       var originalFetch = window.fetch;
       window.fetch = function(input, init) {
@@ -227,6 +252,7 @@ enum InspectorScript {
             domReady = t.domContentLoadedEventEnd - t.navigationStart;
           }
           send({ type: 'performance', loadTime: loadTime, domReady: domReady, transferKB: transfer });
+          reportResources();
         } catch (e) {}
       };
       if (document.readyState === 'complete') { setTimeout(reportPerf, 0); }

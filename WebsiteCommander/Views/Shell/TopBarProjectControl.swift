@@ -33,7 +33,7 @@ struct TopBarProjectControl: View {
                 }
                 Text(label)
                     .font(Theme.ui(13, .medium))
-                    .foregroundStyle(Theme.Chrome.textPrimary)
+                    .foregroundStyle(Theme.Chrome.controlText)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(minWidth: 0,
@@ -51,7 +51,7 @@ struct TopBarProjectControl: View {
         }
         .buttonStyle(TopBarControlButtonStyle(
             radius: TopBarMetrics.controlRadius,
-            emphasis: isOpen ? .selected : .resting
+            emphasis: isOpen ? .selected : .quiet
         ))
         .focused($isFocused)
         .help(helpText)
@@ -71,7 +71,7 @@ struct TopBarProjectControl: View {
         if let workspace = settings.activeWorkspace {
             Image(systemName: workspace.techStack.icon)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(workspace.accentColor)
+                .foregroundStyle(Theme.Chrome.textSecondary)
                 .frame(width: TopBarMetrics.projectIconSize,
                        height: TopBarMetrics.projectIconSize)
         } else {

@@ -26,6 +26,7 @@ struct TopBar: View {
     @Binding var openPopover: TopBarPopoverKind?
 
     @EnvironmentObject private var engine: AgentEngine
+    @EnvironmentObject private var settings: SettingsStore
 
     private var status: AgentStatusPresentation {
         .from(state: engine.state, pendingChanges: engine.pendingChanges.count)
@@ -74,12 +75,13 @@ struct TopBar: View {
     /// with no hover state rather than pretending to be a control.
     private var brand: some View {
         HStack(spacing: 8) {
-            LivingTabMark(size: TopBarMetrics.brandMarkSize, style: .gradient, animated: false)
+            LivingTabMark(size: TopBarMetrics.brandMarkSize, style: .gradient,
+                          animated: false, ambientSignal: true)
             if metrics.showsWordmark {
                 Text("Website Commander")
-                    .font(Theme.ui(14, .semibold))
+                    .font(Theme.ui(13, .semibold))
                     .tracking(-0.21)
-                    .foregroundStyle(Theme.Chrome.textPrimary)
+                    .foregroundStyle(Theme.Chrome.productText)
                     .lineLimit(1)
             }
         }
@@ -116,12 +118,7 @@ struct TopBar: View {
                 )
             }
         }
-        .padding(3)
         .frame(height: TopBarMetrics.navigationContainerHeight)
-        .background {
-            RoundedRectangle(cornerRadius: TopBarMetrics.groupRadius, style: .continuous)
-                .fill(Theme.Chrome.barGroupFill)
-        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Destinations")
     }
@@ -137,7 +134,7 @@ struct TopBar: View {
                 Text(destination.barLabel)
                     .font(Theme.ui(13, .medium))
                     .tracking(-0.13)
-                    .foregroundStyle(Theme.Chrome.textPrimary)
+                    .foregroundStyle(Theme.Chrome.controlText)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
@@ -165,6 +162,7 @@ struct TopBar: View {
             Spacer(minLength: 0)
             TopBarStatusControl(
                 status: status,
+                isConnected: settings.activeWorkspace != nil,
                 showsLabel: metrics.showsStatusLabel,
                 isOpen: openPopover == .status,
                 onToggle: { toggle(.status) }
@@ -316,7 +314,7 @@ private struct TopBarNavigationItem: View {
     }
 
     private var foreground: Color {
-        if isActive { return Theme.Chrome.textPrimary }
+        if isActive { return Theme.Chrome.selectedText }
         return isHovering ? Theme.Chrome.textPrimary : Theme.Chrome.textSecondary
     }
 }
@@ -344,11 +342,11 @@ private struct TopBarPrimaryAction: View {
             }
             .foregroundStyle(isRunning ? AnyShapeStyle(Theme.warning) : AnyShapeStyle(Color.white))
             .frame(width: showsLabel ? TopBarMetrics.primaryActionLabelledWidth
-                                     : TopBarMetrics.controlHeight,
-                   height: TopBarMetrics.controlHeight)
+                                     : Theme.Height.prominent,
+                   height: Theme.Height.prominent)
         }
         .buttonStyle(TopBarControlButtonStyle(
-            radius: TopBarMetrics.controlRadius,
+            radius: Theme.Radius.small,
             emphasis: isRunning ? .semantic(Theme.warning) : .accent
         ))
         // No shortcut is attached here: ⌘N already lives in the File menu and

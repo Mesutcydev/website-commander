@@ -75,6 +75,8 @@ struct TopBarModelControl: View {
     let onToggle: () -> Void
 
     @EnvironmentObject private var settings: SettingsStore
+    @EnvironmentObject private var motion: AmbientMotionCoordinator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isFocused: Bool
 
     private var selection: ModelSelection { .current(settings) }
@@ -84,18 +86,27 @@ struct TopBarModelControl: View {
         18 + TopBarMetrics.iconSize + 7 + TopBarMetrics.chevronSize + 7
     }
 
+    private var providerOpacity: Double {
+        guard isConfigured, motion.isRunning, !reduceMotion else { return 1 }
+        return 0.94 + AmbientMotionMath.breathe(motion.phase(period: 5.4)) * 0.06
+    }
+
+    private var providerScale: CGFloat {
+        guard isConfigured, motion.isRunning, !reduceMotion else { return 1 }
+        return 1 + AmbientMotionMath.breathe(motion.phase(period: 5.4)) * 0.0125
+    }
+
     var body: some View {
         Button(action: onToggle) {
             HStack(spacing: 7) {
                 ProviderGlyph(providerID: selection.providerID,
                               fallbackSymbol: selection.providerIcon,
-                              tint: Theme.violet)
-                // The label stays charcoal: violet at 13pt on the violet surface
-                // would not clear AA, so the accent lives in the glyph and the
-                // surface instead.
+                              tint: Theme.accent)
+                    .opacity(providerOpacity)
+                    .scaleEffect(providerScale)
                 Text(selection.modelLabel)
                     .font(Theme.ui(13, .medium))
-                    .foregroundStyle(isConfigured ? Theme.Chrome.textPrimary : Theme.Chrome.textMuted)
+                    .foregroundStyle(isConfigured ? Theme.Chrome.controlText : Theme.Chrome.textMuted)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(minWidth: 0,
@@ -104,7 +115,7 @@ struct TopBarModelControl: View {
                     .contentTransition(.opacity)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.violet.opacity(0.7))
+                    .foregroundStyle(Theme.Chrome.textMuted)
                     .frame(width: TopBarMetrics.chevronSize,
                            height: TopBarMetrics.chevronSize)
             }
@@ -112,11 +123,9 @@ struct TopBarModelControl: View {
             .frame(height: TopBarMetrics.controlHeight)
             .frame(minWidth: metrics.modelMinWidth, alignment: .leading)
         }
-        // The model control is the app's AI surface, so it carries the violet
-        // identity instead of being a second blue control in the bar.
         .buttonStyle(TopBarControlButtonStyle(
             radius: TopBarMetrics.controlRadius,
-            emphasis: .tinted(.violet)
+            emphasis: .resting
         ))
         .focused($isFocused)
         .help("Choose the provider and model the agent uses")

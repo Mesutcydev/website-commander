@@ -4,48 +4,20 @@ import CoreText
 
 extension Theme {
 
-    /// The typographic voice of Website Commander: a neo-grotesque for app
-    /// chrome, so the workspace reads as a designed desktop product rather than
-    /// a default SwiftUI window.
-    ///
-    /// **On the typeface.** The reference specimen is *Die Grotesk* (Kris
-    /// Sowersby, Klim Type Foundry). Die Grotesk is a commercial retail family —
-    /// its licence forbids redistributing the font files, so an MIT-licensed
-    /// repository cannot ship them. Instead the family is *resolved at runtime*
-    /// from an ordered preference list:
-    ///
-    /// 1. `Die Grotesk` — picked up automatically if the user has bought a
-    ///    licence and installed the family (`~/Library/Fonts`). Nothing else to
-    ///    configure.
-    /// 2. `Hanken Grotesk` — the bundled stand-in (SIL Open Font License 1.1,
-    ///    see `Resources/Fonts/OFL.txt`). Same Helvetica/Akzidenz lineage as Die
-    ///    Grotesk, with slightly more open apertures that hold up better at
-    ///    12–15pt on screen, and full Latin-ext coverage for the Turkish
-    ///    localisation.
-    /// 3. `Helvetica Neue` — ships with macOS; the closest system-native
-    ///    grotesque.
-    /// 4. The system font, if somehow none of the above resolve.
-    ///
-    /// Code and diffs deliberately stay monospaced; this face is for chrome only.
+    /// Native macOS typography for chrome and content. Keeping the interface on
+    /// the system face gives controls, menus, and accessibility settings the same
+    /// metrics as the rest of the desktop.
     enum Typography {
 
         /// Families tried in order. Extend rather than replace — the first
         /// entry exists so a licensed local Die Grotesk install wins.
-        static let familyPreference = [
-            "Die Grotesk",
-            "Hanken Grotesk",
-            "Helvetica Neue"
-        ]
+        static let familyPreference: [String] = []
 
         /// The family actually available on this machine, or `nil` to mean
         /// "fall back to the system font". Resolved once at first use, after
         /// the bundled family is registered — so the ordering can't be got
         /// wrong from a call site.
-        static let resolvedFamily: String? = {
-            registerBundledFonts()
-            let installed = Set(NSFontManager.shared.availableFontFamilies)
-            return familyPreference.first { installed.contains($0) }
-        }()
+        static let resolvedFamily: String? = nil
 
         /// Loads `Contents/Resources/Fonts` into this process. Registration is
         /// process-scoped: nothing is installed into the user's font library.
@@ -88,17 +60,13 @@ extension Theme {
         /// A chrome font at an explicit size and weight, falling back to the
         /// system font when no grotesque is available.
         static func font(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-            Font(nsFont(size, weight))
+            .system(size: size, weight: weight)
         }
 
         /// The same resolution as `font(_:_:)`, as an `NSFont` — used to measure
         /// chrome text so layout budgets can be checked against the face the app
         /// will actually render with.
         static func nsFont(_ size: CGFloat, _ weight: Font.Weight = .regular) -> NSFont {
-            if let family = resolvedFamily,
-               let resolved = cachedFont(family: family, size: size, weight: weight) {
-                return resolved
-            }
             return .systemFont(ofSize: size, weight: weight.appKitWeight)
         }
 

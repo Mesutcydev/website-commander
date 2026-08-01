@@ -34,7 +34,7 @@ struct DebugBriefSheet: View {
             footer
         }
         .frame(minWidth: 560, idealWidth: 640, minHeight: 520, idealHeight: 640)
-        .background(Theme.canvas)
+        .background { GlassPaneBackground() }
         .task { await capture() }
         .onExitCommand { dismiss() }
         .alert("Run agent in Terminal?", isPresented: Binding(

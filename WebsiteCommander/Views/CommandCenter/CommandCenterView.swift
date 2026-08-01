@@ -20,7 +20,7 @@ struct CommandCenterView: View {
                         noSiteCard
                     } else {
                         statsGrid(metrics)
-                        quickActions(metrics)
+                        quickActions()
                         recommendations(metrics)
                         recentActivity
                     }
@@ -28,13 +28,12 @@ struct CommandCenterView: View {
                 .padding(.horizontal, metrics.paddingX)
                 .padding(.top, metrics.paddingTop)
                 .padding(.bottom, metrics.paddingBottom)
-                // No centered page wrapper: the dashboard uses the whole
-                // workspace, on the same gutter as every other destination.
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: 1180, alignment: .leading)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .center)
             }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         }
-        .background(Theme.canvas)
+        .background { GlassWorkspaceBackground() }
         .task(id: settings.activeWorkspace?.id) { await loadCommits() }
     }
 
@@ -47,7 +46,8 @@ struct CommandCenterView: View {
                     .font(Theme.ui(11.5, .semibold))
                     .foregroundStyle(Theme.tertiaryText)
                 Text(settings.activeWorkspace?.name ?? "Website Commander")
-                    .font(.system(size: 27, weight: .semibold))
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(Theme.textHeading)
             }
             Spacer()
             if let ws = settings.activeWorkspace {
@@ -68,8 +68,8 @@ struct CommandCenterView: View {
 
     // MARK: Grid
 
-    /// Flexible columns on the shared card gap, so a row of cards resolves to
-    /// exactly the same left and right edges as the full-width sections.
+    /// Flexible columns on the shared card gap, so a row resolves to exactly the
+    /// same left and right edges as the full-width sections.
     private func columns(_ count: Int) -> [GridItem] {
         Array(repeating: GridItem(.flexible(minimum: 0), spacing: Theme.Space.m),
               count: max(1, count))
@@ -78,29 +78,85 @@ struct CommandCenterView: View {
     // MARK: Stats
 
     private func statsGrid(_ metrics: AgentWorkspaceMetrics) -> some View {
-        LazyVGrid(columns: columns(metrics.statColumns),
-                  alignment: .leading,
-                  spacing: Theme.Space.m) {
-            StatTile(title: "Connected Sites", value: "\(settings.workspaces.count)",
-                     systemImage: "folder.fill", tint: Theme.accent)
-            StatTile(title: "Changes Staged", value: "\(engine.pendingChanges.count)",
-                     systemImage: "tray.full.fill", tint: Theme.warning)
-            StatTile(title: "AI Provider", value: providerName,
-                     systemImage: providerIcon, tint: Theme.accentDeep,
-                     brandID: BrandMarkID.from(providerID: settings.providerID),
-                     compact: true,
-                     caption: settings.smartRouting ? "Auto-routing · \(settings.routingStrategy.rawValue)" : nil)
-            StatTile(
-                title: "Session Cost",
-                value: engine.sessionCostUSD > 0
-                    ? String(format: "$%.3f", engine.sessionCostUSD)
-                    : "Cost tracking unavailable",
-                systemImage: "dollarsign.circle.fill",
-                tint: Theme.success,
-                compact: engine.sessionCostUSD == 0,
-                caption: engine.sessionCostUSD == 0 ? "Appears after reported token usage" : nil
-            )
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            SectionHeader(title: "Overview", systemImage: "chart.bar.fill")
+            ZStack(alignment: .bottom) {
+                Group {
+                    if metrics.statColumns == 4 {
+                        HStack(spacing: 0) {
+                            metricCell(title: "Connected Sites", value: "\(settings.workspaces.count)",
+                                       systemImage: "folder.fill", tint: Theme.secondaryText)
+                            metricDivider
+                            metricCell(title: "Changes Staged", value: "\(engine.pendingChanges.count)",
+                                       systemImage: "tray.full.fill", tint: Theme.secondaryText)
+                            metricDivider
+                            metricCell(title: "AI Provider", value: providerName,
+                                       systemImage: providerIcon, tint: Theme.accentDeep,
+                                       caption: settings.smartRouting ? "Auto-routing" : nil)
+                            metricDivider
+                            metricCell(title: "Session Cost",
+                                       value: engine.sessionCostUSD > 0
+                                           ? String(format: "$%.3f", engine.sessionCostUSD)
+                                           : "—",
+                                       systemImage: "dollarsign.circle.fill",
+                                       tint: Theme.success,
+                                       caption: engine.sessionCostUSD == 0 ? "After the first run" : nil)
+                        }
+                    } else {
+                        LazyVGrid(columns: columns(metrics.statColumns), alignment: .leading, spacing: 0) {
+                            metricCell(title: "Connected Sites", value: "\(settings.workspaces.count)",
+                                       systemImage: "folder.fill", tint: Theme.secondaryText)
+                            metricCell(title: "Changes Staged", value: "\(engine.pendingChanges.count)",
+                                       systemImage: "tray.full.fill", tint: Theme.secondaryText)
+                            metricCell(title: "AI Provider", value: providerName,
+                                       systemImage: providerIcon, tint: Theme.accentDeep,
+                                       caption: settings.smartRouting ? "Auto-routing" : nil)
+                            metricCell(title: "Session Cost",
+                                       value: engine.sessionCostUSD > 0
+                                           ? String(format: "$%.3f", engine.sessionCostUSD)
+                                           : "—",
+                                       systemImage: "dollarsign.circle.fill",
+                                       tint: Theme.success,
+                                       caption: engine.sessionCostUSD == 0 ? "After the first run" : nil)
+                        }
+                    }
+                }
+                if settings.activeWorkspace != nil {
+                    AmbientTelemetryLine(tint: Theme.accent, active: true)
+                        .padding(.horizontal, Theme.Space.s)
+                        .padding(.bottom, 1)
+                }
+            }
+            .padding(.horizontal, Theme.Space.s)
+            .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium,
+                                                              style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
+                    .strokeBorder(Theme.borderSubtle, lineWidth: 1)
+            }
+            .overlay(alignment: .top) {
+                RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.82), lineWidth: 1)
+                    .mask(LinearGradient(colors: [.white, .clear],
+                                          startPoint: .top,
+                                          endPoint: .center))
+            }
+            .cardElevation()
         }
+    }
+
+    @ViewBuilder
+    private func metricCell(title: String, value: String, systemImage: String,
+                            tint: Color, caption: String? = nil) -> some View {
+        CompactMetricCell(title: title, value: value, systemImage: systemImage,
+                          tint: tint, caption: caption)
+            .frame(maxWidth: .infinity)
+    }
+
+    private var metricDivider: some View {
+        Divider()
+            .frame(height: 44)
+            .foregroundStyle(Theme.divider)
     }
 
     private var providerName: String {
@@ -114,32 +170,36 @@ struct CommandCenterView: View {
 
     // MARK: Quick actions
 
-    private func quickActions(_ metrics: AgentWorkspaceMetrics) -> some View {
+    private func quickActions() -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
             SectionHeader(title: "Quick Actions", systemImage: "bolt.fill")
-            LazyVGrid(columns: columns(metrics.quickActionColumns),
-                      alignment: .leading,
-                      spacing: Theme.Space.m) {
-                ActionCard(title: "New Chat", subtitle: "Talk to the agent",
-                           systemImage: "bubble.left.fill", tint: Theme.accent) {
-                    engine.newChat()
-                    destination.wrappedValue = .agent
-                }
-                ActionCard(title: "Add Site", subtitle: "Connect a repo",
-                           systemImage: "plus.circle.fill", tint: Theme.accentDeep) {
-                    destination.wrappedValue = .sites
-                }
-                ActionCard(title: "Open in VS Code", subtitle: "Edit locally",
-                           systemImage: "chevron.left.forwardslash.chevron.right", tint: Theme.success) {
-                    NotificationCenter.default.post(name: .openInVSCode, object: nil)
-                }
-                ActionCard(title: "Preview", subtitle: "See the live site",
-                           systemImage: "eye.fill", tint: Theme.warning) {
-                    destination.wrappedValue = .preview
-                }
-                ActionCard(title: "Debug & Fix", subtitle: "Export to any agent",
-                           systemImage: "ladybug.fill", tint: Theme.danger) {
-                    NotificationCenter.default.post(name: .requestDebug, object: nil)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Theme.Space.s) {
+                    ActionCard(title: "New Chat", subtitle: "Talk to the agent",
+                               systemImage: "bubble.left.fill", tint: Theme.accent,
+                               isProminent: true) {
+                        engine.newChat()
+                        destination.wrappedValue = .agent
+                    }
+                    ActionCard(title: "Add Site", subtitle: "Connect a repo",
+                               systemImage: "plus.circle.fill", tint: Theme.accentDeep) {
+                        destination.wrappedValue = .sites
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                            NotificationCenter.default.post(name: .requestAddSite, object: nil)
+                        }
+                    }
+                    ActionCard(title: "Open in VS Code", subtitle: "Edit locally",
+                               systemImage: "chevron.left.forwardslash.chevron.right", tint: Theme.success) {
+                        NotificationCenter.default.post(name: .requestOpenInVSCode, object: nil)
+                    }
+                    ActionCard(title: "Preview", subtitle: "See the live site",
+                               systemImage: "eye.fill", tint: Theme.warning) {
+                        destination.wrappedValue = .preview
+                    }
+                    ActionCard(title: "Debug & Fix", subtitle: "Export to any agent",
+                               systemImage: "ladybug.fill", tint: Theme.danger) {
+                        NotificationCenter.default.post(name: .requestDebug, object: nil)
+                    }
                 }
             }
         }
@@ -157,15 +217,14 @@ struct CommandCenterView: View {
     private func recommendations(_ metrics: AgentWorkspaceMetrics) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
             SectionHeader(title: "Ask the Agent", systemImage: "sparkles")
-            LazyVGrid(columns: columns(metrics.suggestionColumns),
-                      alignment: .leading,
-                      spacing: Theme.Space.m) {
-                ForEach(suggestions, id: \.title) { item in
+            ChipFlowLayout(itemSpacing: Theme.Space.s, rowSpacing: Theme.Space.s) {
+                ForEach(Array(suggestions.enumerated()), id: \.element.title) { index, item in
                     SuggestionCard(title: item.title, icon: item.icon) {
                         engine.prefilledPrompt = item.prompt
                         engine.newChat()
                         destination.wrappedValue = .agent
                     }
+                    .wcAppear(delay: Double(index) * 0.024)
                 }
             }
         }
@@ -229,27 +288,85 @@ struct CommandCenterView: View {
 
 // MARK: - Action card
 
-/// A tappable visual action: icon tile, title, subtitle.
+/// A compact action-strip control. These stay at one visual level so the
+/// dashboard does not turn every action into a competing card.
 struct ActionCard: View {
     let title: String
     let subtitle: String
     let systemImage: String
     var tint: Color = Theme.accent
+    var isProminent = false
     let action: () -> Void
+    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: Theme.Space.m) {
-                IconTile(systemImage: systemImage, tint: tint, size: 38)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(LocalizedStringKey(title)).font(.body.weight(.semibold))
-                    Text(LocalizedStringKey(subtitle)).font(.caption).foregroundStyle(.secondary)
-                }
+            HStack(spacing: Theme.Space.s) {
+                Image(systemName: systemImage)
+                    .font(.system(size: Theme.IconSize.regular, weight: .semibold))
+                    .frame(width: Theme.IconSize.regular)
+                    .offset(y: isHovering ? -1 : 0)
+                Text(LocalizedStringKey(title))
+                    .font(Theme.ui(12.5, .semibold))
+                    .lineLimit(1)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .commandCard()
+            .foregroundStyle(isProminent ? Theme.textInverse : Theme.textPrimary)
+            .padding(.horizontal, Theme.Space.m)
+            .frame(height: Theme.Height.prominent)
+            .background(isProminent
+                        ? (isHovering ? Theme.accentHover : Theme.accent)
+                        : (isHovering ? Theme.tertiarySurface : Theme.secondarySurface),
+                        in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
+                    .strokeBorder(isProminent ? .clear : Theme.borderHairline, lineWidth: 1)
+            }
         }
         .buttonStyle(.plain)
+        .animation(Motion.interaction, value: isHovering)
+        .onHover { isHovering = $0 }
+        .help(LocalizedStringKey(subtitle))
+    }
+}
+
+private struct CompactMetricCell: View {
+    let title: String
+    let value: String
+    let systemImage: String
+    let tint: Color
+    var caption: String?
+
+    var body: some View {
+        HStack(spacing: Theme.Space.s) {
+            Image(systemName: systemImage)
+                .font(.system(size: Theme.IconSize.regular, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: Theme.IconSize.tile, height: Theme.IconSize.tile)
+                .background(Theme.recessedSurface,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.icon, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(LocalizedStringKey(title))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Theme.secondaryText)
+                    .lineLimit(1)
+                Text(value)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .contentTransition(.numericText())
+                    .animation(Motion.gentle, value: value)
+                if let caption {
+                    Text(caption)
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Theme.tertiaryText)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, Theme.Space.m)
+        .padding(.horizontal, Theme.Space.s)
+        .frame(height: 80, alignment: .leading)
     }
 }
 
@@ -265,22 +382,21 @@ struct SuggestionCard: View {
         Button(action: action) {
             HStack(spacing: Theme.Space.s) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.violet)
-                    .frame(width: 32, height: 32)
-                    .background(Theme.violetSoft,
-                                in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .font(.system(size: Theme.IconSize.metadata, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: Theme.IconSize.regular)
                 Text(LocalizedStringKey(title))
-                    .font(.callout.weight(.medium))
+                    .font(Theme.ui(12, .medium))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
-                Spacer(minLength: 0)
             }
             .padding(.horizontal, Theme.Space.m)
-            .padding(.vertical, Theme.Space.s + 2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.cardFill, in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.borderSubtle, lineWidth: 1))
+            .frame(height: Theme.Height.control, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: false)
+            .background(Theme.secondarySurface,
+                        in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
+                .strokeBorder(Theme.borderHairline, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -306,11 +422,67 @@ struct CommitRow: View {
             }
             Spacer()
             Text(commit.shortSHA)
-                .font(.system(.caption, design: .monospaced))
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                .font(.system(size: 11, design: .monospaced))
+                .padding(.horizontal, 6)
+                .frame(height: Theme.Height.badge)
+                .background(Theme.secondarySurface,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
                 .foregroundStyle(.secondary)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.tertiaryText)
         }
-        .padding(Theme.Space.m)
+        .padding(.horizontal, Theme.Space.m)
+        .frame(height: Theme.Height.detailedRow)
+    }
+}
+
+/// A content-sized wrapping layout for prompt chips. Short prompts stay short;
+/// they do not stretch into equal-width dashboard cards.
+private struct ChipFlowLayout: Layout {
+    let itemSpacing: CGFloat
+    let rowSpacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews,
+                      cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .greatestFiniteMagnitude
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                y += rowHeight + rowSpacing
+                x = 0
+                rowHeight = 0
+            }
+            x += size.width
+            usedWidth = max(usedWidth, x)
+            x += itemSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: proposal.width ?? usedWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                       subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                y += rowHeight + rowSpacing
+                x = bounds.minX
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading,
+                          proposal: ProposedViewSize(size))
+            x += size.width + itemSpacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
