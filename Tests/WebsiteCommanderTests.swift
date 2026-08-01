@@ -45,7 +45,7 @@ final class WebsiteCommanderTests: XCTestCase {
             WorkspaceLayout.clampedAgentWidth(100, in: 1100),
             WorkspaceLayout.agentMinimum
         )
-        XCTAssertEqual(WorkspaceLayout.clampedAgentWidth(900, in: 1100), 520)
+        XCTAssertEqual(WorkspaceLayout.clampedAgentWidth(900, in: 1100), 460)
     }
 
     func testToolEventsCollapseIntoSemanticGroupsAndPreserveFailures() {

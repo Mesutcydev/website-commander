@@ -342,8 +342,8 @@ private struct TopBarPrimaryAction: View {
             }
             .foregroundStyle(isRunning ? AnyShapeStyle(Theme.warning) : AnyShapeStyle(Color.white))
             .frame(width: showsLabel ? TopBarMetrics.primaryActionLabelledWidth
-                                     : Theme.Height.prominent,
-                   height: Theme.Height.prominent)
+                                     : TopBarMetrics.controlHeight,
+                   height: TopBarMetrics.controlHeight)
         }
         .buttonStyle(TopBarControlButtonStyle(
             radius: Theme.Radius.small,

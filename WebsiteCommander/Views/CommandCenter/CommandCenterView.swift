@@ -28,7 +28,7 @@ struct CommandCenterView: View {
                 .padding(.horizontal, metrics.paddingX)
                 .padding(.top, metrics.paddingTop)
                 .padding(.bottom, metrics.paddingBottom)
-                .frame(maxWidth: 1180, alignment: .leading)
+                .frame(maxWidth: 1280, alignment: .leading)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .center)
             }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
@@ -49,10 +49,18 @@ struct CommandCenterView: View {
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(Theme.textHeading)
             }
-            Spacer()
+            Spacer(minLength: Theme.Space.l)
             if let ws = settings.activeWorkspace {
-                Badge(text: ws.deployment.rawValue, systemImage: ws.deployment.icon,
-                      tint: Theme.tertiaryText, surface: Theme.secondarySurface)
+                HStack(spacing: 6) {
+                    Image(systemName: ws.deployment.icon)
+                        .font(.system(size: 11, weight: .medium))
+                    Text(ws.deployment.rawValue)
+                    Text("·")
+                    Text(ws.slug)
+                        .fontDesign(.monospaced)
+                }
+                .font(Theme.ui(11.5, .medium))
+                .foregroundStyle(Theme.secondaryText)
             }
         }
     }
@@ -128,20 +136,8 @@ struct CommandCenterView: View {
                 }
             }
             .padding(.horizontal, Theme.Space.s)
-            .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium,
-                                                              style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
-                    .strokeBorder(Theme.borderSubtle, lineWidth: 1)
-            }
-            .overlay(alignment: .top) {
-                RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.82), lineWidth: 1)
-                    .mask(LinearGradient(colors: [.white, .clear],
-                                          startPoint: .top,
-                                          endPoint: .center))
-            }
-            .cardElevation()
+            .background(Theme.standardSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.panel,
+                                                                      style: .continuous))
         }
     }
 
@@ -317,10 +313,6 @@ struct ActionCard: View {
                         ? (isHovering ? Theme.accentHover : Theme.accent)
                         : (isHovering ? Theme.tertiarySurface : Theme.secondarySurface),
                         in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
-                    .strokeBorder(isProminent ? .clear : Theme.borderHairline, lineWidth: 1)
-            }
         }
         .buttonStyle(.plain)
         .animation(Motion.interaction, value: isHovering)
@@ -377,6 +369,7 @@ struct SuggestionCard: View {
     let title: String
     let icon: String
     let action: () -> Void
+    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
@@ -393,12 +386,12 @@ struct SuggestionCard: View {
             .padding(.horizontal, Theme.Space.m)
             .frame(height: Theme.Height.control, alignment: .leading)
             .fixedSize(horizontal: true, vertical: false)
-            .background(Theme.secondarySurface,
+            .background(isHovering ? Theme.surfaceHover : Theme.secondarySurface,
                         in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
-                .strokeBorder(Theme.borderHairline, lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(Motion.interaction, value: isHovering)
     }
 }
 

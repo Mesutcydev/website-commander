@@ -21,11 +21,6 @@ struct TopBarMaterial: View {
                 Rectangle().fill(Theme.Chrome.barGradient)
             }
         }
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Theme.Chrome.barHighlight)
-                .frame(height: 1)
-        }
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(Theme.Chrome.barBorder)
@@ -103,17 +98,6 @@ struct TopBarControlSurface: View {
                     shape.strokeBorder(border, lineWidth: 1)
                 }
             }
-            .overlay(alignment: .top) {
-                if showsInnerHighlight {
-                    shape
-                        .strokeBorder(Theme.Chrome.barHighlight.opacity(0.55), lineWidth: 1)
-                        .mask(
-                            LinearGradient(colors: [.white, .clear],
-                                           startPoint: .top,
-                                           endPoint: .center)
-                        )
-                }
-            }
             .shadow(color: isAccent ? Theme.Shadow.key : .clear,
                     radius: isAccent ? 6 : 0,
                     y: isAccent ? 2 : 0)
@@ -153,13 +137,6 @@ struct TopBarControlSurface: View {
         case .accent: return nil
         case .tinted(let accent): return accent.color.opacity(0.22)
         case .semantic(let color): return color.opacity(0.28)
-        }
-    }
-
-    private var showsInnerHighlight: Bool {
-        switch emphasis {
-        case .selected, .accent: return true
-        default: return false
         }
     }
 

@@ -122,7 +122,7 @@ struct HistoryView: View {
         .padding(.horizontal, gutter)
         .padding(.top, 20)
         .padding(.bottom, Theme.Space.m)
-        .frame(maxWidth: 1220)
+        .frame(maxWidth: 1360)
         .frame(maxWidth: .infinity)
     }
 
@@ -146,49 +146,34 @@ struct HistoryView: View {
             )
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: Theme.Space.m, pinnedViews: [.sectionHeaders]) {
+                LazyVStack(alignment: .leading, spacing: Theme.Space.l, pinnedViews: [.sectionHeaders]) {
                     ForEach(groupedCommits, id: \.0) { title, entries in
                         Section {
-                            VStack(spacing: 0) {
-                                ForEach(Array(entries.enumerated()), id: \.element.id) { index, commit in
-                                    HistoryCommitRow(
-                                        commit: commit,
-                                        branch: workspace?.gitBranch ?? "",
-                                        selected: selectedCommit?.id == commit.id,
-                                        isNewest: commit.id == commits.first?.id
-                                    ) {
-                                        withAnimation(Motion.smooth) {
-                                            selectedCommit = commit
-                                            selectedDetail = nil
-                                            detailError = nil
-                                        }
-                                        Task { await loadDetails(for: commit) }
+                            ForEach(Array(entries.enumerated()), id: \.element.id) { index, commit in
+                                HistoryCommitRow(
+                                    commit: commit,
+                                    branch: workspace?.gitBranch ?? "",
+                                    selected: selectedCommit?.id == commit.id,
+                                    isNewest: commit.id == commits.first?.id
+                                ) {
+                                    withAnimation(Motion.smooth) {
+                                        selectedCommit = commit
+                                        selectedDetail = nil
+                                        detailError = nil
                                     }
-                                    if index < entries.count - 1 {
-                                        Divider().padding(.leading, 42)
-                                    }
+                                    Task { await loadDetails(for: commit) }
+                                }
+                                if index < entries.count - 1 {
+                                    Divider().padding(.leading, 42)
                                 }
                             }
-                            .background(Theme.standardPanelGradient,
-                                        in: RoundedRectangle(cornerRadius: Theme.Radius.small))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: Theme.Radius.small)
-                                    .strokeBorder(Theme.borderSubtle)
-                            }
-                            .overlay(alignment: .top) {
-                                RoundedRectangle(cornerRadius: Theme.Radius.small)
-                                    .strokeBorder(Color.white.opacity(0.82), lineWidth: 1)
-                                    .mask(LinearGradient(colors: [.white, .clear],
-                                                          startPoint: .top,
-                                                          endPoint: .center))
-                            }
-                            .cardElevation()
                         } header: {
                             Text(title)
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(Theme.secondaryText)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, Theme.Space.xs)
+                                .padding(.top, Theme.Space.xs)
+                                .padding(.bottom, Theme.Space.s)
                                 .background(Theme.workspaceSurface)
                         }
                     }
@@ -259,9 +244,9 @@ private struct HistoryCommitRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: Theme.Space.m) {
-                Image(systemName: "arrow.triangle.branch")
+                Image(systemName: commitSymbol)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(selected ? Theme.accent : Theme.tertiaryText)
+                    .foregroundStyle(selected ? Theme.accent : commitTint)
                     .frame(width: 18)
                 if fresh {
                     AmbientConnectionSignal(tint: Theme.success,
@@ -290,9 +275,6 @@ private struct HistoryCommitRow: View {
                 Text(commit.shortSHA)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(selected ? Theme.accentText : Theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Theme.recessedSurface, in: RoundedRectangle(cornerRadius: 5))
                 Image(systemName: "chevron.right")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(Theme.tertiaryText)
@@ -324,6 +306,26 @@ private struct HistoryCommitRow: View {
             }
         }
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var commitKind: String {
+        commit.message.lowercased()
+    }
+
+    private var commitSymbol: String {
+        if commitKind.contains("merge") { return "arrow.triangle.merge" }
+        if commitKind.contains("perf") || commitKind.contains("speed") { return "gauge.with.dots.needle.67percent" }
+        if commitKind.contains("fix") || commitKind.contains("bug") { return "wrench.and.screwdriver" }
+        if commitKind.contains("feat") || commitKind.contains("add") { return "plus.circle" }
+        return "wrench.adjustable"
+    }
+
+    private var commitTint: Color {
+        if commitKind.contains("merge") { return Theme.info }
+        if commitKind.contains("perf") || commitKind.contains("speed") { return Theme.teal }
+        if commitKind.contains("fix") || commitKind.contains("bug") { return Theme.warning }
+        if commitKind.contains("feat") || commitKind.contains("add") { return Theme.accent }
+        return Theme.tertiaryText
     }
 }
 

@@ -6,8 +6,8 @@ import SwiftUI
 struct WorkspaceLayout {
     static let agentMinimum: CGFloat = 360
     static let agentDefault: CGFloat = 420
-    static let agentMaximum: CGFloat = 520
-    static let previewMinimum: CGFloat = 520
+    static let agentMaximum: CGFloat = 460
+    static let previewMinimum: CGFloat = 560
     static let dividerWidth: CGFloat = 8
     static let compactBreakpoint: CGFloat = agentMinimum + previewMinimum + dividerWidth + 48
 

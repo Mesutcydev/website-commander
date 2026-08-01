@@ -170,7 +170,8 @@ enum Theme {
     /// brand's second note) — closing back on indigo so the rotation has no
     /// seam. The sweep is the signal; brightness never pulses.
     enum Activity {
-        static let sweep: [Color] = [Theme.accent, Theme.violet, Theme.teal, Theme.accent]
+        static let sweep: [Color] = [Theme.accent, Theme.teal, Theme.accent]
+        static let focusSweep: [Color] = [.clear, .clear, Theme.accent, Theme.teal, .clear]
 
         /// A hair thicker than a resting hairline, so the travel is legible
         /// without the composer gaining weight.
@@ -182,6 +183,7 @@ enum Theme {
 
         /// Seconds per rotation. Slow enough to read as ambient presence.
         static let period: Double = 3.2
+        static let focusPeriod: Double = 7.0
         /// Cross-fade in and out of the resting border.
         static let fade = Animation.easeInOut(duration: 0.18)
 
@@ -190,6 +192,10 @@ enum Theme {
 
         static func gradient(angle: Angle) -> AngularGradient {
             AngularGradient(colors: sweep, center: .center, angle: angle)
+        }
+
+        static func focusGradient(angle: Angle) -> AngularGradient {
+            AngularGradient(colors: focusSweep, center: .center, angle: angle)
         }
     }
 
@@ -222,6 +228,7 @@ enum Theme {
     static let selectedSurface = tone(0xF0F1FF, 0x8179FF, darkAlpha: 0.12)
     static let hoverSurface = tertiarySurface
     static let surfaceHover = tertiarySurface
+    static let surfacePressed = tone(0xF0F1F4, 0x29323E)
     static let mutedSurface = secondarySurface
     /// The preview workspace is intentionally darker than the rendered site.
     static let previewWorkspace = tone(0xECEFF3, 0x11151B)
@@ -577,10 +584,10 @@ extension View {
     /// carry the separation on their own.
     func cardElevation(raised: Bool = false) -> some View {
         self
-            .shadow(color: raised ? Theme.Shadow.ambientRaised : Theme.Shadow.ambient,
-                    radius: raised ? 2 : 1.5, y: raised ? 1 : 1)
-            .shadow(color: raised ? Theme.Shadow.keyRaised : Theme.Shadow.key,
-                    radius: raised ? 18 : 12, y: raised ? 8 : 5)
+            .shadow(color: raised ? Theme.Shadow.ambientRaised : .clear,
+                    radius: raised ? 2 : 0, y: raised ? 1 : 0)
+            .shadow(color: raised ? Theme.Shadow.keyRaised : .clear,
+                    radius: raised ? 18 : 0, y: raised ? 8 : 0)
     }
 
     /// Standard panel chrome: elevated surface, neutral hairline, soft lift.
@@ -591,15 +598,8 @@ extension View {
             .background(surface, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .strokeBorder(Theme.borderSubtle, lineWidth: 1)
+                    .strokeBorder(Theme.borderHairline, lineWidth: 1)
             )
-            .overlay(alignment: .top) {
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.82), lineWidth: 1)
-                    .mask(LinearGradient(colors: [.white, .clear],
-                                          startPoint: .top,
-                                          endPoint: .center))
-            }
             .cardElevation()
     }
 
@@ -612,13 +612,6 @@ extension View {
             .overlay(
                 shape.strokeBorder(Theme.borderSubtle, lineWidth: 1)
             )
-            .overlay(alignment: .top) {
-                shape
-                    .strokeBorder(Color.white.opacity(0.88), lineWidth: 1)
-                    .mask(LinearGradient(colors: [.white, .clear],
-                                          startPoint: .top,
-                                          endPoint: .center))
-            }
             .clipShape(shape)
             .cardElevation(raised: true)
     }

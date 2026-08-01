@@ -761,7 +761,7 @@ struct ChatView: View {
                     .foregroundStyle(Theme.danger)
             }
 
-            HStack(alignment: .bottom, spacing: Theme.Space.m) {
+            HStack(alignment: .bottom, spacing: Theme.Space.s) {
                 HStack(alignment: .bottom, spacing: Theme.Space.s) {
                     ComposerAttachmentButton {
                         showAttachmentPicker = true
@@ -781,22 +781,10 @@ struct ChatView: View {
                         }
                 }
                 .padding(.horizontal, Theme.Space.m + 2)
-                .padding(.vertical, 9)
-                .frame(minHeight: Theme.Height.composer)
+                .padding(.vertical, 7)
+                .frame(minHeight: 40)
                 .background(Theme.elevatedSurface,
                             in: RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous)
-                        .strokeBorder(composerShowsFocus ? Theme.accent.opacity(0.44) : Theme.borderStandard,
-                                      lineWidth: 1)
-                }
-                .overlay(alignment: .top) {
-                    RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.88), lineWidth: 1)
-                        .mask(LinearGradient(colors: [.white, .clear],
-                                              startPoint: .top,
-                                              endPoint: .center))
-                }
                 .activityBorder(active: engine.state.isActive, focused: composerShowsFocus)
                 .cardElevation(raised: composerShowsFocus)
                 .animation(Motion.smooth, value: composerShowsFocus)
@@ -832,7 +820,7 @@ struct ChatView: View {
             composerFooter
         }
         .padding(.horizontal, metrics.paddingX)
-        .padding(.vertical, 14)
+        .padding(.vertical, 10)
         .workspaceColumn(metrics)
     }
 
@@ -844,7 +832,7 @@ struct ChatView: View {
     private var promptHeader: some View {
         HStack(spacing: Theme.Space.s) {
             Label("Agent prompt", systemImage: "sparkles")
-                .font(Theme.ui(11.5, .semibold))
+                .font(Theme.ui(10.5, .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
             Label(settings.autoCommit ? "Auto-commit on" : "Review before commit",
@@ -1134,26 +1122,27 @@ struct SmartTaskCard: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .top, spacing: Theme.Space.s) {
-                    iconTile
-                    Spacer(minLength: 0)
-                    if recommended { RecommendedBadge() }
+            HStack(spacing: Theme.Space.s) {
+                iconTile
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(LocalizedStringKey(template.title))
+                        .font(Theme.ui(13, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(LocalizedStringKey(template.subtitle))
+                        .font(Theme.ui(11.5))
+                        .foregroundStyle(Theme.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-                Text(LocalizedStringKey(template.title))
-                    .font(Theme.ui(13, .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                Text(LocalizedStringKey(template.subtitle))
-                    .font(Theme.ui(12))
-                    .foregroundStyle(Theme.secondaryText)
-                    .lineSpacing(2)
-                    .lineLimit(metrics.isNarrow ? 2 : 3)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
+                Spacer(minLength: Theme.Space.xs)
+                if recommended { RecommendedBadge() }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.tertiaryText)
             }
-            .padding(Theme.Space.m)
+            .padding(.horizontal, Theme.Space.m)
+            .padding(.vertical, Theme.Space.s)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(minHeight: metrics.taskCardMinHeight, alignment: .topLeading)
         }
@@ -1194,8 +1183,8 @@ private struct RecommendedBadge: View {
     }
 }
 
-/// The card's surface: neutral fill, hairline, and two very soft shadows that
-/// only get clearer on hover. Motion is a 1.5pt lift, not a scale.
+/// The row's surface: tonal separation at rest, a quiet hover state, and a
+/// restrained focus indicator. Suggestions are not elevated cards.
 private struct SmartTaskCardStyle: ButtonStyle {
     let isHovering: Bool
 
@@ -1218,29 +1207,17 @@ private struct SmartTaskCardStyle: ButtonStyle {
         var body: some View {
             configuration.label
                 .background(configuration.isPressed
-                            ? AnyShapeStyle(Theme.secondarySurface)
-                            : AnyShapeStyle(Theme.standardPanelGradient),
+                            ? AnyShapeStyle(Theme.surfacePressed)
+                            : AnyShapeStyle(isHovering ? Theme.surfaceHover : Theme.standardSurface),
                             in: shape)
-                .overlay {
-                    shape.strokeBorder(isHovering ? Theme.borderStandard : Theme.borderSubtle,
-                                       lineWidth: 1)
-                }
-                .cardElevation(raised: isHovering && !configuration.isPressed)
                 .overlay {
                     shape.inset(by: -3)
                         .strokeBorder(Theme.focusRing.opacity(isFocused ? 0.9 : 0), lineWidth: 2)
                 }
-                .offset(y: liftedOffset)
                 .contentShape(shape)
                 .opacity(isEnabled ? 1 : 0.5)
                 .animation(reduceMotion ? nil : Theme.Chrome.Timing.press,
                            value: configuration.isPressed)
-        }
-
-        private var liftedOffset: CGFloat {
-            guard !reduceMotion else { return 0 }
-            if configuration.isPressed { return 0 }
-            return isHovering ? -1.5 : 0
         }
     }
 }

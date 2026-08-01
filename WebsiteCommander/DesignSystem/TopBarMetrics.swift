@@ -51,13 +51,13 @@ struct TopBarMetrics: Equatable {
     // MARK: Fixed chrome tokens
 
     /// The global application toolbar height. It does not grow by density.
-    static let height: CGFloat = 56
-    static let minimalHeight: CGFloat = 56
-    static let paddingX: CGFloat = 16
+    static let height: CGFloat = 58
+    static let minimalHeight: CGFloat = 58
+    static let paddingX: CGFloat = 20
     /// Gap between controls inside a zone.
-    static let groupGap: CGFloat = 8
+    static let groupGap: CGFloat = 12
     /// Gap between the three zones.
-    static let zoneGap: CGFloat = 12
+    static let zoneGap: CGFloat = 14
     /// The left zone is slightly looser: brand lockups need air.
     static let leftZoneGap: CGFloat = 10
 
@@ -73,7 +73,7 @@ struct TopBarMetrics: Equatable {
     static let smallControlRadius: CGFloat = 7
     static let groupRadius: CGFloat = 8
     static let viewGroupRadius: CGFloat = 8
-    static let popoverRadius: CGFloat = 16
+    static let popoverRadius: CGFloat = 14
     static let popoverRowRadius: CGFloat = 8
 
     static let dividerHeight: CGFloat = 16
@@ -225,7 +225,7 @@ struct TopBarMetrics: Equatable {
     static let primaryActionLabelledWidth: CGFloat = 82
 
     var primaryActionWidth: CGFloat {
-        primaryActionShowsLabel ? Self.primaryActionLabelledWidth : Theme.Height.prominent
+        primaryActionShowsLabel ? Self.primaryActionLabelledWidth : Self.controlHeight
     }
 
     /// The second divider only earns its place when view controls follow it.

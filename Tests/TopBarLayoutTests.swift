@@ -16,12 +16,12 @@ final class TopBarLayoutTests: XCTestCase {
     // MARK: Dimensions
 
     func testBarDimensionsMatchTheSpecifiedScale() {
-        XCTAssertEqual(TopBarMetrics.height, 56)
-        XCTAssertEqual(TopBarMetrics.paddingX, 16)
+        XCTAssertEqual(TopBarMetrics.height, 58)
+        XCTAssertEqual(TopBarMetrics.paddingX, 20)
         XCTAssertEqual(TopBarMetrics.controlHeight, 32)
         XCTAssertEqual(TopBarMetrics.smallControlSize, 28)
-        XCTAssertEqual(TopBarMetrics.groupGap, 8)
-        XCTAssertEqual(TopBarMetrics.zoneGap, 12)
+        XCTAssertEqual(TopBarMetrics.groupGap, 12)
+        XCTAssertEqual(TopBarMetrics.zoneGap, 14)
         XCTAssertEqual(TopBarMetrics.leftZoneGap, 10)
         XCTAssertEqual(TopBarMetrics.brandHeight, 32)
         XCTAssertEqual(TopBarMetrics.statusHeight, 20)
@@ -34,18 +34,18 @@ final class TopBarLayoutTests: XCTestCase {
         XCTAssertEqual(TopBarMetrics.smallControlRadius, 7, "28pt icon controls")
         XCTAssertEqual(TopBarMetrics.controlRadius, 8, "32pt controls")
         XCTAssertEqual(TopBarMetrics.groupRadius, 8, "grouped containers")
-        XCTAssertEqual(TopBarMetrics.popoverRadius, 16, "popovers")
+        XCTAssertEqual(TopBarMetrics.popoverRadius, 14, "popovers")
     }
 
     /// The bar is never taller than 72 on desktop, and only ever gets shorter at
     /// the narrowest tier.
     func testBarNeverExceedsTheDesktopCeiling() {
         for width in [800.0, 1024.0, 1200.0, 1280.0, 1440.0, 1600.0, 1728.0, 2560.0] as [CGFloat] {
-            XCTAssertEqual(TopBarMetrics(width: width).height, 56,
+            XCTAssertEqual(TopBarMetrics(width: width).height, 58,
                            "a \(Int(width))pt window keeps the compact bar")
         }
-        XCTAssertEqual(TopBarMetrics(width: 799).height, 56)
-        XCTAssertEqual(TopBarMetrics(width: 760).height, 56)
+        XCTAssertEqual(TopBarMetrics(width: 799).height, 58)
+        XCTAssertEqual(TopBarMetrics(width: 760).height, 58)
     }
 
     func testTrafficLightRoomIsReservedRatherThanGuessed() {
@@ -151,9 +151,9 @@ final class TopBarLayoutTests: XCTestCase {
 
         let medium = TopBarMetrics(width: 1280)
         XCTAssertFalse(medium.primaryActionShowsLabel, "icon-only below ~1320")
-        XCTAssertEqual(medium.primaryActionWidth, Theme.Height.prominent)
-        XCTAssertEqual(medium.primaryActionWidth, 36,
-                       "the compact action stays at the primary height")
+        XCTAssertEqual(medium.primaryActionWidth, TopBarMetrics.controlHeight)
+        XCTAssertEqual(medium.primaryActionWidth, 32,
+                       "the compact action stays at the control height")
     }
 
     func testPrimaryActionBecomesIconOnlyAtTheDocumentedWidth() {

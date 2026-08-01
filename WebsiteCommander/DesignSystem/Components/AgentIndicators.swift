@@ -214,6 +214,17 @@ private struct ActivityBorder: ViewModifier {
                                     : 0)))
                     .transition(.opacity)
             }
+        } else if focused {
+            if reduce {
+                stroked(Theme.Activity.staticTint).opacity(0.9).transition(.opacity)
+            } else {
+                stroked(Theme.Activity.focusGradient(
+                    angle: .degrees(motion.isRunning
+                                    ? motion.phase(period: Theme.Activity.focusPeriod) * 360
+                                    : 0)))
+                    .opacity(0.72)
+                    .transition(.opacity)
+            }
         }
     }
 

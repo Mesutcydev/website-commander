@@ -72,7 +72,9 @@ struct AgentWorkspaceMetrics: Equatable {
         return 1
     }
 
-    var taskCardMinHeight: CGFloat { isNarrow ? 100 : 112 }
+    /// Suggested improvements are actions, not feature cards. Keep them in a
+    /// compact 72–80pt row so the composer and preview retain the canvas.
+    var taskCardMinHeight: CGFloat { isNarrow ? 76 : 80 }
 
     // MARK: Command Center rows
 
