@@ -105,7 +105,16 @@ struct ChatView: View {
             onCompletion: importAttachments
         )
         .onChange(of: engine.pendingChanges.count) { oldCount, newCount in
-            guard oldCount == 0, newCount > 0, reviewingChange == nil,
+            // Auto-commit owns the approval transition. A staged change can be
+            // visible for a moment while the model finishes its turn; opening
+            // a review sheet here would leave a stale sheet behind after the
+            // automatic commit and a second click would look like a conflict.
+            if newCount == 0 {
+                reviewingChange = nil
+                return
+            }
+            guard !settings.autoCommit,
+                  oldCount == 0, newCount > 0, reviewingChange == nil,
                   let first = engine.pendingChanges.first else { return }
             DispatchQueue.main.async { reviewingChange = first }
         }
@@ -305,7 +314,11 @@ struct ChatView: View {
                         LiveToolActivity(events: engine.liveToolEvents)
                             .id("live-tools")
                     }
-                    ForEach(engine.transcript) { message in
+                    // Queued prompts render after the live assistant bubble,
+                    // even though they were submitted while that bubble was
+                    // still streaming. This keeps the visual conversation
+                    // order truthful without mutating the active context.
+                    ForEach(engine.transcript.filter { !$0.isQueued }) { message in
                         MessageBubble(message: message, metrics: metrics)
                             .id(message.id)
                     }
@@ -325,6 +338,10 @@ struct ChatView: View {
                     } else if engine.state.isActive {
                         TypingIndicator()
                             .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    }
+                    ForEach(engine.transcript.filter(\.isQueued)) { message in
+                        MessageBubble(message: message, metrics: metrics)
+                            .id(message.id)
                     }
                     Color.clear.frame(height: 1).id("chat-bottom")
                         .background {
@@ -760,15 +777,19 @@ struct ChatView: View {
                     .font(.callout)
                     .foregroundStyle(Theme.danger)
             }
+            if engine.queuedPromptCount > 0 {
+                queuedPromptNotice
+            }
 
             HStack(alignment: .bottom, spacing: Theme.Space.s) {
                 HStack(alignment: .bottom, spacing: Theme.Space.s) {
                     ComposerAttachmentButton {
                         showAttachmentPicker = true
                     }
-                    .disabled(engine.state.isActive || attachments.count >= Attachment.maximumCount)
+                    .disabled((engine.isRunActive && !engine.canQueuePrompt)
+                              || attachments.count >= Attachment.maximumCount)
 
-                    TextField("Describe a change, issue, or goal…", text: $draft, axis: .vertical)
+                    TextField(composerPlaceholder, text: $draft, axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(Theme.ui(13.5))
                         .foregroundStyle(Theme.textPrimary)
@@ -803,6 +824,17 @@ struct ChatView: View {
                     .labelStyle(.iconOnly)
                     .buttonStyle(ComposerActionStyle(kind: .stop))
                     .help("Stop agent (⌘.)")
+                    if canSend {
+                        Button {
+                            sendIfPossible()
+                        } label: {
+                            Label("Queue message", systemImage: "arrow.up")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(ComposerActionStyle(kind: .send))
+                        .help("Queue follow-up message (⌘↩)")
+                    }
                 } else {
                     Button {
                         sendIfPossible()
@@ -825,16 +857,29 @@ struct ChatView: View {
     }
 
     private var canSend: Bool {
-        (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
-            && !engine.isRunActive
+        let hasContent = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !attachments.isEmpty
+        return hasContent && (!engine.isRunActive || engine.canQueuePrompt)
+    }
+
+    private var composerPlaceholder: String {
+        engine.isRunActive
+            ? String(localized: "Queue a follow-up…")
+            : String(localized: "Describe a change, issue, or goal…")
     }
 
     private var promptHeader: some View {
         HStack(spacing: Theme.Space.s) {
-            Label("Agent prompt", systemImage: "sparkles")
+            Label(engine.isRunActive ? "Queue follow-up" : "Agent prompt",
+                  systemImage: engine.isRunActive ? "clock.arrow.circlepath" : "sparkles")
                 .font(Theme.ui(10.5, .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
+            if engine.queuedPromptCount > 0 {
+                Text("(engine.queuedPromptCount) queued")
+                    .font(Theme.ui(10.5, .medium))
+                    .foregroundStyle(Theme.violet)
+            }
             Label(settings.autoCommit ? "Auto-commit on" : "Review before commit",
                   systemImage: settings.autoCommit ? "bolt.fill" : "checkmark.shield.fill")
                 .font(Theme.ui(10.5, .medium))
@@ -847,6 +892,43 @@ struct ChatView: View {
                 .background(Theme.secondarySurface, in: Capsule())
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var queuedPromptNotice: some View {
+        HStack(spacing: Theme.Space.s) {
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundStyle(Theme.violet)
+            Text(queuedPromptNoticeText)
+                .font(.caption)
+                .foregroundStyle(Theme.secondaryText)
+                .lineLimit(2)
+            Spacer(minLength: Theme.Space.s)
+            if !engine.isRunActive && !engine.canContinue
+                && engine.pendingChanges.isEmpty {
+                Button("Run queued") {
+                    engine.resumeQueuedPrompts()
+                }
+                .buttonStyle(.primarySoftCompact)
+            }
+        }
+        .padding(.horizontal, Theme.Space.s)
+        .padding(.vertical, 7)
+        .background(Theme.violetSoft, in: RoundedRectangle(cornerRadius: Theme.Radius.small,
+                                                            style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var queuedPromptNoticeText: String {
+        if engine.isRunActive {
+            return String(localized: "Follow-up prompts run in order after this turn.")
+        }
+        if engine.canContinue {
+            return String(localized: "Continue the current run to process the queued follow-ups.")
+        }
+        if !engine.pendingChanges.isEmpty {
+            return String(localized: "Queued follow-ups will start after the staged changes are reviewed.")
+        }
+        return String(localized: "Queued follow-ups are ready to run.")
     }
 
     private var composerFooter: some View {
@@ -877,11 +959,11 @@ struct ChatView: View {
             ? "Review the attached file\(attachments.count == 1 ? "" : "s")."
             : draft
         let outgoingAttachments = attachments
+        guard engine.send(text, attachments: outgoingAttachments) else { return }
         UserDefaults.standard.removeObject(forKey: draftStorageKey(for: draftWorkspaceID))
         draft = ""
         attachments = []
         attachmentError = nil
-        engine.send(text, attachments: outgoingAttachments)
     }
 
     private var currentDraftWorkspaceID: UUID? {
@@ -966,13 +1048,7 @@ struct ChatView: View {
     }
 
     private func retryLastPrompt() {
-        guard let text = engine.transcript.last(where: { $0.role == .user })?.text else {
-            engine.lastError = nil
-            return
-        }
-        engine.lastError = nil
-        draft = text
-        sendIfPossible()
+        engine.retryFailedRun()
     }
 }
 
@@ -1515,8 +1591,10 @@ struct MessageBubble: View {
     var metrics: AgentWorkspaceMetrics?
 
     @EnvironmentObject var settings: SettingsStore
+    @EnvironmentObject var engine: AgentEngine
 
     private var isUser: Bool { message.role == .user }
+    private var isQueued: Bool { message.isQueued }
 
     private var assistantProviderID: String {
         settings.preferOnDevice ? "ondevice" : settings.providerID
@@ -1546,6 +1624,22 @@ struct MessageBubble: View {
 
     private var content: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: Theme.Space.s) {
+            if isQueued {
+                HStack(spacing: 5) {
+                    Image(systemName: "clock")
+                    Text("Queued")
+                    Button {
+                        engine.removeQueuedPrompt(message.id)
+                    } label: {
+                        Label("Remove queued prompt", systemImage: "xmark")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove queued prompt")
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Theme.violet)
+            }
             if !message.toolEvents.isEmpty {
                 toolEvents
             }
@@ -1579,7 +1673,10 @@ struct MessageBubble: View {
     }
 
     private var background: AnyShapeStyle {
-        isUser ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.cardFill)
+        if isUser {
+            return AnyShapeStyle(isQueued ? Theme.accent.opacity(0.58) : Theme.accent)
+        }
+        return AnyShapeStyle(Theme.cardFill)
     }
 
     private var bubbleShape: RoundedRectangle {

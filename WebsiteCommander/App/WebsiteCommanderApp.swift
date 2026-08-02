@@ -23,6 +23,7 @@ struct WebsiteCommanderApp: App {
         let bridge = LocalBridge()
         bridge.settings = settings
         bridge.engine = engine
+        bridge.browser = browser
         _settings = StateObject(wrappedValue: settings)
         _browser = StateObject(wrappedValue: browser)
         _cloudSync = StateObject(wrappedValue: cloudSync)

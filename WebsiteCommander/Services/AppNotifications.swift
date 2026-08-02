@@ -9,6 +9,8 @@ extension Notification.Name {
     static let requestPalette = Notification.Name("requestPalette")
     static let requestAgentPreview = Notification.Name("requestAgentPreview")
     static let requestAgentPreviewFromEngine = Notification.Name("requestAgentPreviewFromEngine")
+    static let requestPreviewFromBridge = Notification.Name("requestPreviewFromBridge")
+    static let requestPreviewInspectFromBridge = Notification.Name("requestPreviewInspectFromBridge")
     static let requestConversations = Notification.Name("requestConversations")
     static let requestAgentSend = Notification.Name("requestAgentSend")
     static let requestAgentStop = Notification.Name("requestAgentStop")

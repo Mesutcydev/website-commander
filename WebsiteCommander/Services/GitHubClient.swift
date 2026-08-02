@@ -6,6 +6,8 @@ enum GitHubError: LocalizedError {
     case decoding(String)
     case notFound(String)
     case branchDrift(expected: String, actual: String)
+    case fileChanged(path: String)
+    case repositoryChanged
 
     var errorDescription: String? {
         switch self {
@@ -34,9 +36,18 @@ enum GitHubError: LocalizedError {
         case .notFound(let what):
             return "Not found: \(what)"
         case .branchDrift:
-            return "The branch changed after this import was prepared. Refresh the review before committing."
+            return "The branch changed while the review was waiting to be committed. Nothing was committed. Refresh the staged files and try again."
+        case .fileChanged(let path):
+            return "GitHub changed \(path) while it was waiting for approval. Nothing was committed. Review the file again and restage it."
+        case .repositoryChanged:
+            return "GitHub changed the repository while this approval was in progress. Nothing was committed. Review the staged files and try again."
         }
     }
+}
+
+struct GitHubExpectedFile {
+    var path: String
+    var sha: String?
 }
 
 struct GitHubBatchChange {
@@ -205,15 +216,43 @@ struct GitHubClient {
 
     /// Commit multiple text/binary files as one non-force update. The branch
     /// head is checked immediately before the Git Data API sequence so a blog
-    /// import cannot silently overwrite unrelated remote work.
+    /// import cannot silently overwrite unrelated remote work. `expectedFiles`
+    /// adds per-file optimistic concurrency checks for normal agent reviews;
+    /// a nil SHA means the file was expected not to exist when it was staged.
     @discardableResult
     func commitBatch(owner: String, repo: String, branch: String,
                      expectedParentSHA: String, message: String,
-                     changes: [GitHubBatchChange]) async throws -> String {
+                     changes: [GitHubBatchChange],
+                     expectedFiles: [GitHubExpectedFile] = []) async throws -> String {
         guard !changes.isEmpty else { throw GitHubError.decoding("empty batch") }
         let currentHead = try await branchHeadSHA(owner: owner, repo: repo, branch: branch)
         guard currentHead == expectedParentSHA else {
             throw GitHubError.branchDrift(expected: expectedParentSHA, actual: currentHead)
+        }
+
+        let uniquePaths = Set(changes.map(\.path))
+        guard uniquePaths.count == changes.count else {
+            throw GitHubError.decoding("duplicate batch path")
+        }
+
+        // Verify each reviewed file against the blob that was read while the
+        // change was staged. This prevents a batch commit from overwriting a
+        // remote edit even when the branch head itself only changed elsewhere.
+        for expected in expectedFiles {
+            let actual: String?
+            do {
+                actual = try await fileData(owner: owner, repo: repo,
+                                            path: expected.path, branch: branch).sha
+            } catch let error as GitHubError {
+                if case .http(404, _) = error {
+                    actual = nil
+                } else {
+                    throw error
+                }
+            }
+            guard actual == expected.sha else {
+                throw GitHubError.fileChanged(path: expected.path)
+            }
         }
 
         let encodedParent = expectedParentSHA.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
@@ -284,10 +323,21 @@ struct GitHubClient {
 
         let encodedBranch = branch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? branch
         let refBody: [String: Any] = ["sha": newCommitSHA, "force": false]
-        _ = try await request(
-            "/repos/\(owner)/\(repo)/git/refs/heads/\(encodedBranch)",
-            method: "PATCH", body: refBody
-        )
+        do {
+            _ = try await request(
+                "/repos/\(owner)/\(repo)/git/refs/heads/\(encodedBranch)",
+                method: "PATCH", body: refBody
+            )
+        } catch let error as GitHubError {
+            // A concurrent ref update is reported by GitHub as 409 or, for
+            // some installations, 422 with a non-fast-forward message. The
+            // caller should keep every staged change for review in either case.
+            if case let .http(status, body) = error,
+               status == 409 || (status == 422 && body.lowercased().contains("fast forward")) {
+                throw GitHubError.repositoryChanged
+            }
+            throw error
+        }
         return newCommitSHA
     }
 

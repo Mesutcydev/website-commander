@@ -1,6 +1,62 @@
 import XCTest
 import SwiftUI
+import Foundation
 @testable import WebsiteCommander
+
+private final class GitHubBatchURLProtocol: URLProtocol {
+    struct StubResponse {
+        let status: Int
+        let data: Data
+    }
+
+    static var responses: [String: [StubResponse]] = [:]
+    static var requests: [URLRequest] = []
+
+    static func reset() {
+        responses = [:]
+        requests = []
+    }
+
+    static func enqueue(method: String, path: String, status: Int = 200,
+                        object: Any) {
+        let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+        let key = "\(method) \(path)"
+        responses[key, default: []].append(StubResponse(status: status, data: data))
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "example.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let method = request.httpMethod ?? "GET"
+        let query = url.query.map { "?\($0)" } ?? ""
+        let key = "\(method) \(url.path)\(query)"
+        Self.requests.append(request)
+        let stub = Self.responses[key]?.isEmpty == false
+            ? Self.responses[key]!.removeFirst()
+            : StubResponse(status: 404, data: Data(#"{"message":"not stubbed"}"#.utf8))
+        let response = HTTPURLResponse(url: url, statusCode: stub.status,
+                                       httpVersion: nil,
+                                       headerFields: ["Content-Type": "application/json"])
+        if let response {
+            client?.urlProtocol(self, didReceive: response,
+                                cacheStoragePolicy: .notAllowed)
+        }
+        client?.urlProtocol(self, didLoad: stub.data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
 
 /// Safety-net tests for the pure, security- and correctness-critical logic.
 /// These run on every change so the app keeps functioning. They deliberately
@@ -79,6 +135,169 @@ final class WebsiteCommanderTests: XCTestCase {
         XCTAssertFalse(ProviderRetryPolicy.isTransient(LLMError.decoding("bad payload")))
     }
 
+    func testGitHubBatchCommitUsesOneAtomicRefUpdateForMultipleFiles() async throws {
+        GitHubBatchURLProtocol.reset()
+        let parent = "parent-sha"
+        let baseTree = "base-tree-sha"
+        let apiRoot = "https://example.test"
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/git/ref/heads/main",
+            object: ["object": ["sha": parent]])
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/contents/app.js?ref=main",
+            object: ["sha": "app-old", "content": Data("old".utf8).base64EncodedString()])
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/contents/style.css?ref=main",
+            object: ["sha": "style-old", "content": Data("old".utf8).base64EncodedString()])
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/git/commits/\(parent)",
+            object: ["tree": ["sha": baseTree]])
+        GitHubBatchURLProtocol.enqueue(
+            method: "POST", path: "/repos/octocat/demo/git/blobs",
+            status: 201, object: ["sha": "app-blob"])
+        GitHubBatchURLProtocol.enqueue(
+            method: "POST", path: "/repos/octocat/demo/git/blobs",
+            status: 201, object: ["sha": "style-blob"])
+        GitHubBatchURLProtocol.enqueue(
+            method: "POST", path: "/repos/octocat/demo/git/trees",
+            status: 201, object: ["sha": "new-tree"])
+        GitHubBatchURLProtocol.enqueue(
+            method: "POST", path: "/repos/octocat/demo/git/commits",
+            status: 201, object: ["sha": "new-commit"])
+        GitHubBatchURLProtocol.enqueue(
+            method: "PATCH", path: "/repos/octocat/demo/git/refs/heads/main",
+            object: ["ref": "updated"])
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GitHubBatchURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let client = GitHubClient(token: "test-token", apiBase: apiRoot, session: session)
+        let sha = try await client.commitBatch(
+            owner: "octocat", repo: "demo", branch: "main",
+            expectedParentSHA: parent, message: "Update site",
+            changes: [
+                GitHubBatchChange(path: "app.js", data: Data("new app".utf8)),
+                GitHubBatchChange(path: "style.css", data: Data("new style".utf8))
+            ],
+            expectedFiles: [
+                GitHubExpectedFile(path: "app.js", sha: "app-old"),
+                GitHubExpectedFile(path: "style.css", sha: "style-old")
+            ])
+
+        XCTAssertEqual(sha, "new-commit")
+        let patchRequests = GitHubBatchURLProtocol.requests.filter { $0.httpMethod == "PATCH" }
+        XCTAssertEqual(patchRequests.count, 1)
+
+        let commitRequests = GitHubBatchURLProtocol.requests.filter {
+            $0.httpMethod == "POST" && $0.url?.path.hasSuffix("/git/commits") == true
+        }
+        XCTAssertEqual(commitRequests.count, 1)
+    }
+
+    func testGitHubBatchRejectsChangedFileBeforeCreatingAnyCommit() async throws {
+        GitHubBatchURLProtocol.reset()
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/git/ref/heads/main",
+            object: ["object": ["sha": "parent-sha"]])
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/contents/app.js?ref=main",
+            object: ["sha": "remote-new", "content": Data("remote".utf8).base64EncodedString()])
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GitHubBatchURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let client = GitHubClient(token: "test-token", apiBase: "https://example.test", session: session)
+        do {
+            _ = try await client.commitBatch(
+                owner: "octocat", repo: "demo", branch: "main",
+                expectedParentSHA: "parent-sha", message: "Update site",
+                changes: [GitHubBatchChange(path: "app.js", data: Data("new".utf8))],
+                expectedFiles: [GitHubExpectedFile(path: "app.js", sha: "staged-old")])
+            XCTFail("Expected the stale file check to reject the batch")
+        } catch let error as GitHubError {
+            guard case .fileChanged("app.js") = error else {
+                XCTFail("Unexpected GitHub error: \(error)")
+                return
+            }
+        }
+        XCTAssertFalse(GitHubBatchURLProtocol.requests.contains {
+            $0.httpMethod == "POST" || $0.httpMethod == "PATCH"
+        })
+    }
+
+    @MainActor
+    func testApproveAllUsesOneBatchForStagedFilesFromTheAgent() async throws {
+        GitHubBatchURLProtocol.reset()
+        let parent = "parent-sha"
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/git/ref/heads/main",
+            object: ["object": ["sha": parent]])
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/git/ref/heads/main",
+            object: ["object": ["sha": parent]])
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/contents/app.js?ref=main",
+            object: ["sha": "app-old", "content": Data("old".utf8).base64EncodedString()])
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/contents/style.css?ref=main",
+            object: ["sha": "style-old", "content": Data("old".utf8).base64EncodedString()])
+        GitHubBatchURLProtocol.enqueue(
+            method: "GET", path: "/repos/octocat/demo/git/commits/\(parent)",
+            object: ["tree": ["sha": "base-tree"]])
+        GitHubBatchURLProtocol.enqueue(
+            method: "POST", path: "/repos/octocat/demo/git/blobs",
+            status: 201, object: ["sha": "app-blob"])
+        GitHubBatchURLProtocol.enqueue(
+            method: "POST", path: "/repos/octocat/demo/git/blobs",
+            status: 201, object: ["sha": "style-blob"])
+        GitHubBatchURLProtocol.enqueue(
+            method: "POST", path: "/repos/octocat/demo/git/trees",
+            status: 201, object: ["sha": "new-tree"])
+        GitHubBatchURLProtocol.enqueue(
+            method: "POST", path: "/repos/octocat/demo/git/commits",
+            status: 201, object: ["sha": "new-commit"])
+        GitHubBatchURLProtocol.enqueue(
+            method: "PATCH", path: "/repos/octocat/demo/git/refs/heads/main",
+            object: [:])
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GitHubBatchURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let settings = SettingsStore()
+        let workspace = SiteWorkspace(name: "Batch Test", gitOwner: "octocat",
+                                      gitRepo: "demo", gitBranch: "main",
+                                      githubCredentialID: nil,
+                                      techStack: .vanillaHTML, deployment: .githubPages,
+                                      defaultModel: "stub")
+        settings.workspaces = [workspace]
+        settings.activeWorkspaceID = workspace.id
+        let engine = AgentEngine(settings: settings, browserController: BrowserController(),
+                                 githubSession: session, githubAPIBase: "https://example.test",
+                                 githubTokenProvider: { _ in "test-token" })
+        engine.stagePendingChange(path: "app.js", content: "new app",
+                                  message: "Update app", oldContent: "old",
+                                  baseSHA: "app-old")
+        engine.stagePendingChange(path: "style.css", content: "new style",
+                                  message: "Update style", oldContent: "old",
+                                  baseSHA: "style-old")
+
+        let approved = await engine.approveAll()
+        XCTAssertTrue(approved)
+        XCTAssertTrue(engine.pendingChanges.isEmpty)
+        XCTAssertEqual(
+            GitHubBatchURLProtocol.requests.filter {
+                $0.httpMethod == "PATCH"
+            }.count,
+            1
+        )
+        XCTAssertEqual(
+            GitHubBatchURLProtocol.requests.filter {
+                $0.httpMethod == "POST" && $0.url?.path.hasSuffix("/git/commits") == true
+            }.count,
+            1
+        )
+    }
+
     @MainActor
     func testContinueRunDoesNotAppendUserTurn() async {
         let engine = makeAgentEngine()
@@ -92,6 +311,33 @@ final class WebsiteCommanderTests: XCTestCase {
         XCTAssertEqual(engine.transcript.filter { $0.role == .user }.count, userCount)
         XCTAssertFalse(engine.canContinue)
         XCTAssertFalse(engine.isRunActive)
+    }
+
+    @MainActor
+    func testFollowUpPromptQueuesDuringActiveRunAndDrainsInOrder() async {
+        let engine = makeAgentEngine()
+        engine.transcript.append(ChatMessage(role: .user, text: "inspect the footer"))
+        engine.finishBudgetLimitedRun(toolEvents: [], reason: "initial pause")
+        engine.continueRun(using: StubProvider(delay: .milliseconds(60)))
+
+        XCTAssertTrue(engine.isRunActive)
+        XCTAssertTrue(engine.send("now check the mobile layout"))
+        XCTAssertEqual(engine.queuedPromptCount, 1)
+        XCTAssertTrue(engine.transcript.last?.isQueued == true)
+
+        // The first turn may take two provider calls because edit-shaped prompts
+        // receive the existing write-file nudge; the queued turn must still run
+        // only after that turn has completed.
+        try? await Task.sleep(for: .milliseconds(800))
+
+        XCTAssertFalse(engine.isRunActive)
+        XCTAssertEqual(engine.queuedPromptCount, 0)
+        let followUp = engine.transcript.first { $0.text == "now check the mobile layout" }
+        XCTAssertEqual(followUp?.deliveryState, .sent)
+        XCTAssertGreaterThanOrEqual(
+            engine.transcript.filter { $0.role == .assistant }.count, 3,
+            "the paused turn, its continuation, and queued follow-up should be visible"
+        )
     }
 
     @MainActor
@@ -513,6 +759,17 @@ final class WebsiteCommanderTests: XCTestCase {
         XCTAssertFalse((dbg["prompt"] as? String ?? "").isEmpty)
         XCTAssertNotNil(dbg["briefPath"])
 
+        let preview = await bridge.dispatch(op: "preview", req: ["site": "octocat/hello-world"])
+        XCTAssertEqual(preview["ok"] as? Bool, true)
+        XCTAssertEqual(settings.activeWorkspace?.slug, "octocat/hello-world")
+
+        let inspect = await bridge.dispatch(op: "inspect", req: ["site": "Bridge Test"])
+        XCTAssertEqual(inspect["ok"] as? Bool, true)
+
+        let audit = await bridge.dispatch(op: "audit", req: ["site": "Bridge Test"])
+        XCTAssertEqual(audit["ok"] as? Bool, true)
+        XCTAssertNotNil(audit["audit"])
+
         let badUse = await bridge.dispatch(op: "use", req: ["site": "missing"])
         XCTAssertEqual(badUse["ok"] as? Bool, false)
     }
@@ -870,6 +1127,11 @@ final class WebsiteCommanderTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ChatMessage.self, from: encoded)
         XCTAssertEqual(decoded.reasoning, "Think")
 
+        let queued = ChatMessage(role: .user, text: "Follow up", deliveryState: .queued)
+        let queuedData = try JSONEncoder().encode(queued)
+        let decodedQueued = try JSONDecoder().decode(ChatMessage.self, from: queuedData)
+        XCTAssertTrue(decodedQueued.isQueued)
+
         // Older saved conversations without a reasoning key must still load.
         let legacy = """
         {"id":"11111111-1111-1111-1111-111111111111","role":"assistant","text":"Hi",
@@ -878,6 +1140,40 @@ final class WebsiteCommanderTests: XCTestCase {
         let old = try JSONDecoder().decode(ChatMessage.self, from: Data(legacy.utf8))
         XCTAssertNil(old.reasoning)
         XCTAssertEqual(old.text, "Hi")
+        XCTAssertFalse(old.isQueued)
+    }
+
+    @MainActor
+    func testSiteAuditDoesNotTreatResourceTimingEntriesAsFailedRequests() {
+        let inspector = WebInspectorModel()
+        let timestamp = Date()
+        inspector.networkRequests = [
+            NetworkRequest(method: "GET", url: "https://example.com/app.js", status: nil,
+                           durationMs: 12, sizeBytes: 512, timestamp: timestamp)
+        ]
+        let html = """
+        <html><head><title>Example</title>
+        <meta name="description" content="Example">
+        <meta property="og:title" content="Example"></head>
+        <body><img src="hero.png" alt="Hero"></body></html>
+        """
+
+        var issues = SiteAuditor.audit(html: html, inspector: inspector)
+        XCTAssertFalse(issues.contains { $0.title == "Failed network requests" })
+
+        inspector.networkRequests.append(
+            NetworkRequest(method: "GET", url: "https://example.com/missing.js", status: 404,
+                           durationMs: 12, sizeBytes: nil, timestamp: timestamp)
+        )
+        issues = SiteAuditor.audit(html: html, inspector: inspector)
+        XCTAssertTrue(issues.contains { $0.title == "Failed network requests" })
+
+        inspector.networkRequests = [
+            NetworkRequest(method: "GET", url: "https://example.com/offline", status: 0,
+                           durationMs: 12, sizeBytes: nil, timestamp: timestamp)
+        ]
+        issues = SiteAuditor.audit(html: html, inspector: inspector)
+        XCTAssertTrue(issues.contains { $0.title == "Failed network requests" })
     }
 
     // MARK: - Settings isolation under XCTest

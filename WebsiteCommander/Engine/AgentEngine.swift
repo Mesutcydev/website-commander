@@ -81,6 +81,10 @@ final class AgentEngine: ObservableObject {
 
     // MARK: Published state
 
+    /// Follow-up prompts are bounded so an accidental key repeat cannot create
+    /// an unbounded run or cost queue.
+    static let maximumQueuedPrompts = 20
+
     /// The visible conversation. Every mutation schedules an autosave — the
     /// user never saves a chat by hand.
     @Published var transcript: [ChatMessage] = [] { didSet { scheduleAutosave() } }
@@ -111,6 +115,19 @@ final class AgentEngine: ObservableObject {
     private var activeTask: Task<Void, Never>?
     private var activeRunID: UUID?
     private var currentRunExpectsEdits = false
+
+    /// User prompts submitted while a turn is running. They live in the
+    /// transcript immediately, but their delivery state keeps them out of the
+    /// model context until it is safe to start the next turn.
+    var queuedPrompts: [ChatMessage] {
+        transcript.filter { $0.role == .user && $0.isQueued }
+    }
+
+    var queuedPromptCount: Int { queuedPrompts.count }
+
+    var canQueuePrompt: Bool {
+        queuedPromptCount < Self.maximumQueuedPrompts
+    }
 
     // MARK: Experimental blog import
 
@@ -184,6 +201,13 @@ final class AgentEngine: ObservableObject {
 
     let settings: SettingsStore
     let browserController: BrowserController
+    /// Injectable for deterministic approval tests; production uses the shared
+    /// session so GitHub credentials and URL caching behave as before.
+    private let githubSession: URLSession
+    private let githubAPIBase: String
+    /// Injectable so approval tests never touch the user's Keychain. The
+    /// production default preserves the asynchronous credential lookup.
+    private let githubTokenProvider: (SiteWorkspace?) async -> String?
     /// Set by the app after construction; enables saved conversations.
     var conversationStore: ConversationStore? {
         didSet { flushConversation() }
@@ -199,9 +223,17 @@ final class AgentEngine: ObservableObject {
     /// sends within a session; reset by `newChat()`.
     private var context: [LLMMessage] = []
 
-    init(settings: SettingsStore, browserController: BrowserController) {
+    init(settings: SettingsStore, browserController: BrowserController,
+         githubSession: URLSession = .shared,
+         githubAPIBase: String = "https://api.github.com",
+         githubTokenProvider: ((SiteWorkspace?) async -> String?)? = nil) {
         self.settings = settings
         self.browserController = browserController
+        self.githubSession = githubSession
+        self.githubAPIBase = githubAPIBase
+        self.githubTokenProvider = githubTokenProvider ?? { workspace in
+            await settings.resolvedGitHubToken(forAsync: workspace)
+        }
         rebuildSystemPrompt()
         observeAppLifecycle()
     }
@@ -293,9 +325,9 @@ final class AgentEngine: ObservableObject {
     /// the Keychain, and a Keychain prompt must never block a tool turn or UI
     /// layout while the engine is deciding which repository to use.
     private func gitHub(for workspace: SiteWorkspace) async -> GitHubClient? {
-        guard let token = await settings.resolvedGitHubToken(forAsync: workspace),
+        guard let token = await githubTokenProvider(workspace),
               !token.isEmpty else { return nil }
-        return GitHubClient(token: token)
+        return GitHubClient(token: token, apiBase: githubAPIBase, session: githubSession)
     }
 
     private func clearBlogImportStorage() {
@@ -399,12 +431,20 @@ final class AgentEngine: ObservableObject {
         clearLiveStreams()
         rebuildSystemPrompt()
         for message in conv.messages {
+            // A queued prompt was persisted for recovery, but it must not be
+            // replayed before the interrupted turn that precedes it.
+            guard !message.isQueued else { continue }
             switch message.role {
             case .user: context.append(.user(message.text))
             case .assistant:
                 context.append(.assistant(message.text, reasoning: message.reasoning))
             default: break
             }
+        }
+        if queuedPromptCount > 0 {
+            canContinue = true
+            lastStopReason = "This chat was interrupted. Continue the current run to process the queued follow-up prompts."
+            state = .paused
         }
     }
 
@@ -727,30 +767,60 @@ final class AgentEngine: ObservableObject {
     // MARK: Send
 
     /// Send a user turn and run the tool loop until the model stops calling tools.
-    func send(_ text: String, attachments: [Attachment] = []) {
+    @discardableResult
+    func send(_ text: String, attachments: [Attachment] = []) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard !isRunActive else { return }
+        guard !trimmed.isEmpty else { return false }
         guard settings.activeWorkspace != nil else {
             lastError = "Connect a website first (Settings → GitHub, then + New Site)."
-            return
+            return false
+        }
+
+        // Never mutate the in-flight model context. A second user turn must
+        // appear after the current assistant/tool turn, so queue it and let the
+        // active run promote it only after reaching a safe boundary.
+        let shouldQueue = isRunActive || canContinue || !pendingChanges.isEmpty
+            || activeBlogImportSessionID != nil || queuedPromptCount > 0
+        if shouldQueue {
+            guard canQueuePrompt else {
+                lastError = "The follow-up queue is full. Wait for a queued prompt to run before adding another."
+                return false
+            }
+            lastApprovalError = nil
+            lastDeploymentWarning = nil
+            transcript.append(ChatMessage(role: .user, text: trimmed,
+                                          attachments: attachments,
+                                          deliveryState: .queued))
+            // Queue state is user intent; persist it immediately so a quit or
+            // crash cannot silently lose a follow-up prompt.
+            flushConversation()
+            return true
         }
         guard let provider = currentProvider() else {
             lastError = "No AI provider configured. Add an API key in Settings."
-            return
+            return false
         }
         lastError = nil
         lastApprovalError = nil
         lastDeploymentWarning = nil
-        transcript.append(ChatMessage(role: .user, text: trimmed, attachments: attachments))
+        let message = ChatMessage(role: .user, text: trimmed, attachments: attachments)
+        transcript.append(message)
         // A prompt is worth keeping even if the app dies mid-generation.
         flushConversation()
+        appendUserTurnToContext(message)
+        startRun(provider: provider)
+        return true
+    }
 
-        let images = attachments.filter { $0.isImage }.map {
+    /// Add a sent user message to the provider context, including the same
+    /// attachment handling used by the initial send. Queued messages call this
+    /// only when they become the active turn.
+    private func appendUserTurnToContext(_ message: ChatMessage) {
+        let images = message.attachments.filter { $0.isImage }.map {
             LLMImage(mimeType: $0.mimeType, base64: $0.data.base64EncodedString())
         }
-        var contextualText = trimmed
-        for attachment in attachments where attachment.isTextual {
+        var contextualText = message.text
+        for attachment in message.attachments where attachment.isTextual {
             if let text = attachment.asText {
                 contextualText += "\n\n" + PromptGuard.fence(
                     source: "attachment:\(attachment.filename)",
@@ -759,8 +829,84 @@ final class AgentEngine: ObservableObject {
             }
         }
         context.append(.user(contextualText, images: images))
-        currentRunExpectsEdits = Self.requestExpectsEdits(trimmed)
+        currentRunExpectsEdits = Self.requestExpectsEdits(message.text)
+    }
+
+    /// Promote exactly one queued prompt into the model context. Keeping this
+    /// transition atomic on the main actor prevents a follow-up from being
+    /// inserted between an assistant response and its tool results.
+    private func promoteNextQueuedPrompt() -> Bool {
+        guard let index = transcript.firstIndex(where: { $0.role == .user && $0.isQueued }) else {
+            return false
+        }
+        var message = transcript[index]
+        message.deliveryState = .sent
+        transcript[index] = message
+        appendUserTurnToContext(message)
+        flushConversation()
+        return true
+    }
+
+    /// Start the next queued turn only when the previous run has completed and
+    /// no approval/recovery boundary is waiting for the user.
+    private func startNextQueuedPromptIfPossible(using completedProvider: LLMProvider? = nil) {
+        guard !isRunActive, !canContinue, lastError == nil,
+              pendingChanges.isEmpty, activeBlogImportSessionID == nil,
+              queuedPromptCount > 0 else { return }
+        guard settings.activeWorkspace != nil else {
+            lastError = "Connect a website before running the queued follow-up prompts."
+            return
+        }
+        let provider = completedProvider ?? currentProvider()
+        guard let provider else {
+            lastError = "No AI provider configured. Add an API key in Settings."
+            return
+        }
+        guard promoteNextQueuedPrompt() else { return }
+        lastError = nil
+        lastApprovalError = nil
+        lastDeploymentWarning = nil
         startRun(provider: provider)
+    }
+
+    /// Explicit recovery action for a queue that is waiting after a provider
+    /// failure or an interrupted conversation restore.
+    func resumeQueuedPrompts() {
+        guard !isRunActive, !canContinue, pendingChanges.isEmpty else { return }
+        lastError = nil
+        lastApprovalError = nil
+        lastStopReason = nil
+        startNextQueuedPromptIfPossible()
+    }
+
+    /// Retry the provider request that failed without appending a duplicate
+    /// user message. Queued follow-ups remain behind the retried turn and drain
+    /// only after it succeeds.
+    func retryFailedRun() {
+        guard !isRunActive, !canContinue, pendingChanges.isEmpty,
+              activeBlogImportSessionID == nil,
+              lastError != nil,
+              transcript.contains(where: { $0.role == .user && !$0.isQueued }) else { return }
+        guard settings.activeWorkspace != nil else {
+            lastError = "Connect a website before retrying the agent run."
+            return
+        }
+        guard let provider = currentProvider() else {
+            lastError = "No AI provider configured. Add an API key in Settings."
+            return
+        }
+        lastError = nil
+        lastApprovalError = nil
+        lastStopReason = nil
+        startRun(provider: provider)
+    }
+
+    func removeQueuedPrompt(_ id: UUID) {
+        guard let index = transcript.firstIndex(where: {
+            $0.id == id && $0.role == .user && $0.isQueued
+        }) else { return }
+        transcript.remove(at: index)
+        flushConversation()
     }
 
     func cancelGeneration() {
@@ -805,10 +951,13 @@ final class AgentEngine: ObservableObject {
         lastTurnCostUSD = 0
         activeTask = Task { @MainActor in
             await runLoop(provider: provider)
-            guard self.activeRunID == runID else { return }
+            // Cancellation clears activeRunID before the task resumes, so a
+            // deliberate Stop/New Chat can never accidentally drain the queue.
+            guard self.activeRunID == runID, !Task.isCancelled else { return }
             self.activeTask = nil
             self.activeRunID = nil
             self.isRunActive = false
+            self.startNextQueuedPromptIfPossible(using: provider)
         }
     }
 
@@ -1069,10 +1218,10 @@ final class AgentEngine: ObservableObject {
                 break
             }
 
-            // If auto-commit is on and we staged changes, commit them now.
-            if settings.autoCommit && activeBlogImportSessionID == nil && !pendingChanges.isEmpty {
-                _ = await approveAll()
-            }
+            // Auto-commit waits for the model to finish its complete turn.
+            // Committing at each tool boundary can split a multi-file edit into
+            // partial commits and makes the next approval race its own branch
+            // update. The final-response boundary below commits the whole batch.
         }
 
         finishBudgetLimitedRun(
@@ -1634,6 +1783,7 @@ final class AgentEngine: ObservableObject {
     /// the article, index update, and imported media from landing partially.
     private func approveBlogImport(sessionID: UUID, changes: [PendingChange]) async -> Bool {
         lastApprovalError = nil
+        lastCommitNote = nil
         lastDeploymentWarning = nil
         guard !changes.isEmpty,
               let first = changes.first,
@@ -1650,7 +1800,7 @@ final class AgentEngine: ObservableObject {
             state = .failed
             return false
         }
-        guard let token = await settings.resolvedGitHubToken(forAsync: workspace), !token.isEmpty else {
+        guard let token = await githubTokenProvider(workspace), !token.isEmpty else {
             let message = "GitHub is not connected for \(workspace.name). Add or select its token in Settings → GitHub, then try again."
             lastApprovalError = message
             lastError = message
@@ -1686,7 +1836,8 @@ final class AgentEngine: ObservableObject {
             }
 
             state = .committing
-            let commitSHA = try await GitHubClient(token: token).commitBatch(
+            let commitSHA = try await GitHubClient(token: token, apiBase: githubAPIBase,
+                                                   session: githubSession).commitBatch(
                 owner: workspace.gitOwner,
                 repo: workspace.gitRepo,
                 branch: workspace.gitBranch,
@@ -1707,6 +1858,9 @@ final class AgentEngine: ObservableObject {
             }
             lastError = nil
             state = pendingChanges.isEmpty ? .done : .awaitingApproval
+            if pendingChanges.isEmpty {
+                startNextQueuedPromptIfPossible()
+            }
             return true
         } catch let error as GitHubError {
             let message: String
@@ -1730,50 +1884,84 @@ final class AgentEngine: ObservableObject {
         }
     }
 
-    /// Commit a single staged change to GitHub.
+    /// Commit one or more ordinary staged changes as one optimistic, atomic
+    /// Git commit. The current branch tree is used as the parent, while every
+    /// reviewed file is checked against the blob SHA captured when it was
+    /// staged. This preserves unrelated remote edits and prevents the first
+    /// file in an approval batch from invalidating the remaining files.
     @discardableResult
-    func approve(_ change: PendingChange) async -> Bool {
-        if let sessionID = change.importSessionID {
-            var importChanges = pendingChanges.filter { $0.importSessionID == sessionID }
-            if !importChanges.contains(where: { $0.id == change.id }) {
-                importChanges.insert(change, at: 0)
-            }
-            return await approveBlogImport(sessionID: sessionID, changes: importChanges)
-        }
+    private func approveStandardBatch(_ changes: [PendingChange]) async -> Bool {
         lastApprovalError = nil
+        lastCommitNote = nil
         lastDeploymentWarning = nil
-        guard let workspace = workspace(for: change) else {
-            let message = "This change belongs to a site that is no longer connected."
+        guard !changes.isEmpty,
+              let first = changes.first,
+              let workspace = workspace(for: first),
+              changes.allSatisfy({
+                  $0.importSessionID == nil &&
+                  ($0.workspaceID == nil || $0.workspaceID == workspace.id) &&
+                  !$0.isBinary
+              }) else {
+            let message = "These staged changes belong to different sites or include an unsupported binary file. Review them separately."
             lastApprovalError = message
             lastError = message
             state = .failed
             return false
         }
-        guard let token = await settings.resolvedGitHubToken(forAsync: workspace), !token.isEmpty else {
+        guard let token = await githubTokenProvider(workspace), !token.isEmpty else {
             let message = "GitHub is not connected for \(workspace.name). Add or select its token in Settings → GitHub, then try again."
             lastApprovalError = message
             lastError = message
             state = .failed
             return false
         }
-        let gitHub = GitHubClient(token: token)
+
+        let gitHub = GitHubClient(token: token, apiBase: githubAPIBase, session: githubSession)
         state = .committing
         do {
-            guard !change.isBinary else {
-                throw GitHubError.decoding("Binary changes must be approved as part of their import transaction.")
+            // Capture the parent immediately before validation. commitBatch
+            // performs the same branch-head check again before constructing the
+            // tree, and the non-force ref update provides the final CAS guard.
+            let parentSHA = try await gitHub.branchHeadSHA(owner: workspace.gitOwner,
+                                                            repo: workspace.gitRepo,
+                                                            branch: workspace.gitBranch)
+            let batch = changes.map { change in
+                GitHubBatchChange(path: change.path,
+                                  data: Data(change.newContent.utf8),
+                                  isDeletion: change.isDeletion)
             }
-            try await gitHub.commitFile(owner: workspace.gitOwner, repo: workspace.gitRepo,
-                                        path: change.path, content: change.newContent,
-                                        message: change.message, branch: workspace.gitBranch,
-                                        sha: change.baseSHA)
-            pendingChanges.removeAll { $0.id == change.id }
+            let expectedFiles = changes.map {
+                GitHubExpectedFile(path: $0.path, sha: $0.baseSHA)
+            }
+            let message = changes.count == 1
+                ? changes[0].message
+                : "Update \(workspace.name) (\(changes.count) files)"
+            let commitSHA = try await gitHub.commitBatch(
+                owner: workspace.gitOwner,
+                repo: workspace.gitRepo,
+                branch: workspace.gitBranch,
+                expectedParentSHA: parentSHA,
+                message: message,
+                changes: batch,
+                expectedFiles: expectedFiles
+            )
+            let approvedIDs = Set(changes.map(\.id))
+            pendingChanges.removeAll { approvedIDs.contains($0.id) }
             let deploy = await DeploymentService.trigger(for: workspace)
-            lastCommitNote = "Committed \(change.path). \(workspace.deployment.redeployNote)"
+            if changes.count == 1 {
+                lastCommitNote = "Committed \(changes[0].path). \(workspace.deployment.redeployNote)"
+            } else {
+                lastCommitNote = "Committed \(changes.count) changes (\(String(commitSHA.prefix(7)))). \(workspace.deployment.redeployNote)"
+            }
             if !deploy.isSuccess {
                 lastDeploymentWarning = deploy.note
             }
             lastError = nil
+            lastApprovalError = nil
             state = pendingChanges.isEmpty ? .done : .awaitingApproval
+            if pendingChanges.isEmpty {
+                startNextQueuedPromptIfPossible()
+            }
             return true
         } catch {
             let message = error.localizedDescription
@@ -1784,21 +1972,50 @@ final class AgentEngine: ObservableObject {
         }
     }
 
-    /// Commit all staged changes, one commit per file.
+    /// Commit a single staged change to GitHub.
+    @discardableResult
+    func approve(_ change: PendingChange) async -> Bool {
+        if let sessionID = change.importSessionID {
+            var importChanges = pendingChanges.filter { $0.importSessionID == sessionID }
+            if !importChanges.contains(where: { $0.id == change.id }) {
+                importChanges.insert(change, at: 0)
+            }
+            return await approveBlogImport(sessionID: sessionID, changes: importChanges)
+        }
+        return await approveStandardBatch([change])
+    }
+
+    /// Commit all staged changes. Ordinary files for the same site are grouped
+    /// into one atomic commit; blog imports retain their existing transaction
+    /// semantics. No successful file is removed from review until its whole
+    /// batch has committed.
     @discardableResult
     func approveAll() async -> Bool {
         let changes = pendingChanges
         var allOK = true
         var approvedSessions = Set<UUID>()
-        for change in changes {
-            if let sessionID = change.importSessionID {
-                guard approvedSessions.insert(sessionID).inserted else { continue }
-                let importChanges = pendingChanges.filter { $0.importSessionID == sessionID }
-                if !(await approveBlogImport(sessionID: sessionID, changes: importChanges)) {
-                    allOK = false
-                    break
-                }
-            } else if !(await approve(change)) {
+        for change in changes where change.importSessionID != nil {
+            guard let sessionID = change.importSessionID,
+                  approvedSessions.insert(sessionID).inserted else { continue }
+            let importChanges = pendingChanges.filter { $0.importSessionID == sessionID }
+            if !(await approveBlogImport(sessionID: sessionID, changes: importChanges)) {
+                return false
+            }
+        }
+
+        var standardGroups: [[PendingChange]] = []
+        for change in changes where change.importSessionID == nil {
+            let targetID = workspace(for: change)?.id
+            if let index = standardGroups.firstIndex(where: {
+                workspace(for: $0[0])?.id == targetID
+            }) {
+                standardGroups[index].append(change)
+            } else {
+                standardGroups.append([change])
+            }
+        }
+        for group in standardGroups {
+            if !(await approveStandardBatch(group)) {
                 allOK = false
                 break
             }
@@ -1826,7 +2043,12 @@ final class AgentEngine: ObservableObject {
         } else {
             pendingChanges.removeAll { $0.id == change.id }
         }
+        lastError = nil
+        lastApprovalError = nil
         state = pendingChanges.isEmpty ? .done : .awaitingApproval
+        if pendingChanges.isEmpty {
+            startNextQueuedPromptIfPossible()
+        }
     }
 
     func discardAll() {
@@ -1839,7 +2061,10 @@ final class AgentEngine: ObservableObject {
         for sessionID in sessionIDs where sessionID != activeSession {
             Task { await blogImportAssetStore.cleanup(sessionID: sessionID) }
         }
+        lastError = nil
+        lastApprovalError = nil
         state = .done
+        startNextQueuedPromptIfPossible()
     }
 
     // MARK: Cost

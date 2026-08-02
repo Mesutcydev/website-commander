@@ -91,13 +91,26 @@ shasum -a 256 "$DMG" "$ZIP" | tee "$BUILD/SHA256SUMS.txt"
 # default secret key; override with GPG_KEY="name-or-id".
 GPG_BIN="$(command -v gpg2 || command -v gpg || true)"
 if [ -n "$GPG_BIN" ]; then
-  echo "==> PGP-signing checksums with ${GPG_KEY:-default key}"
+  HAS_SECRET_KEY=0
   if [ -n "${GPG_KEY:-}" ]; then
-    "$GPG_BIN" --batch --yes --local-user "$GPG_KEY" --armor --detach-sign "$BUILD/SHA256SUMS.txt"
+    HAS_SECRET_KEY=1
   else
-    "$GPG_BIN" --batch --yes --armor --detach-sign "$BUILD/SHA256SUMS.txt"
+    if "$GPG_BIN" --batch --list-secret-keys --with-colons 2>/dev/null \
+      | awk -F: '$1 == "sec" { found = 1 } END { exit !found }'; then
+      HAS_SECRET_KEY=1
+    fi
   fi
-  echo "    -> $BUILD/SHA256SUMS.txt.asc"
+  if [ "$HAS_SECRET_KEY" = "1" ]; then
+    echo "==> PGP-signing checksums with ${GPG_KEY:-default key}"
+    if [ -n "${GPG_KEY:-}" ]; then
+      "$GPG_BIN" --batch --yes --local-user "$GPG_KEY" --armor --detach-sign "$BUILD/SHA256SUMS.txt"
+    else
+      "$GPG_BIN" --batch --yes --armor --detach-sign "$BUILD/SHA256SUMS.txt"
+    fi
+    echo "    -> $BUILD/SHA256SUMS.txt.asc"
+  else
+    echo "==> No GPG secret key available; skipping optional PGP signature"
+  fi
 fi
 
 NOTARIZED_NOTE="(ad-hoc; not notarized)"

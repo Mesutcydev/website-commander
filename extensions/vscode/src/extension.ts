@@ -19,6 +19,11 @@ interface BridgeResponse {
   markdown?: string;
   prompt?: string;
   briefPath?: string;
+  healthScore?: number;
+  liveURL?: string;
+  audit?: Array<{ severity: string; title: string; detail: string }>;
+  consoleErrors?: string[];
+  failedRequests?: Array<{ method: string; url: string; status: number }>;
   [k: string]: unknown;
 }
 
@@ -173,6 +178,7 @@ async function sendSelection() {
 
 async function debugSite() {
   const site = configuredSite() || (await pickSite());
+  if (!site && !configuredSite()) return;
   try {
     const resp = await request("debug", site ? { site } : {});
     if (!resp.ok) {
@@ -190,6 +196,69 @@ async function debugSite() {
         "Debug brief opened; a tailored prompt is on your clipboard."
       );
     }
+  } catch (e) {
+    vscode.window.showErrorMessage((e as Error).message);
+  }
+}
+
+async function openPreview(inspect = false) {
+  const site = configuredSite() || (await pickSite());
+  if (!site && !configuredSite()) return;
+  try {
+    const resp = await request(inspect ? "inspect" : "preview", site ? { site } : {});
+    if (!resp.ok) {
+      vscode.window.showErrorMessage(`Website Commander: ${resp.error ?? "failed"}`);
+      return;
+    }
+    vscode.window.showInformationMessage(
+      `Website Commander: ${inspect ? "Inspector" : "Preview"} opened${site ? ` for ${site}` : ""}.`
+    );
+  } catch (e) {
+    vscode.window.showErrorMessage((e as Error).message);
+  }
+}
+
+async function auditPreview() {
+  const site = configuredSite() || (await pickSite());
+  if (!site && !configuredSite()) return;
+  try {
+    const resp = await request("audit", site ? { site } : {});
+    if (!resp.ok) {
+      vscode.window.showErrorMessage(`Website Commander: ${resp.error ?? "failed"}`);
+      return;
+    }
+
+    const findings = resp.audit ?? [];
+    const failedRequests = resp.failedRequests ?? [];
+    const errors = resp.consoleErrors ?? [];
+    const lines = [
+      "# Website Commander Preview Audit",
+      "",
+      `- Site: ${site ?? "active site"}`,
+      `- Live URL: ${resp.liveURL ?? "—"}`,
+      `- Health score: ${resp.healthScore ?? 0}/100`,
+      "",
+      "## Findings",
+      "",
+      ...(findings.length
+        ? findings.map((f) => `- **[${f.severity}] ${f.title}** — ${f.detail}`)
+        : ["- No findings." ]),
+      "",
+      "## Console errors",
+      "",
+      ...(errors.length ? errors.map((error) => `- ${error}`) : ["- None." ]),
+      "",
+      "## Failed requests",
+      "",
+      ...(failedRequests.length
+        ? failedRequests.map((request) => `- ${request.method} ${request.url} → ${request.status}`)
+        : ["- None." ]),
+    ];
+    const doc = await vscode.workspace.openTextDocument({
+      content: lines.join("\n"),
+      language: "markdown",
+    });
+    await vscode.window.showTextDocument(doc, { preview: true });
   } catch (e) {
     vscode.window.showErrorMessage((e as Error).message);
   }
@@ -218,6 +287,9 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("websiteCommander.sendSelection", sendSelection),
     vscode.commands.registerCommand("websiteCommander.debugSite", debugSite),
+    vscode.commands.registerCommand("websiteCommander.openPreview", () => openPreview(false)),
+    vscode.commands.registerCommand("websiteCommander.inspectPreview", () => openPreview(true)),
+    vscode.commands.registerCommand("websiteCommander.auditPreview", auditPreview),
     vscode.commands.registerCommand("websiteCommander.listSites", listSites)
   );
 }

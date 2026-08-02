@@ -35,11 +35,12 @@ struct WebView: NSViewRepresentable {
     let url: URL?
     var reloadToken: UUID
     @ObservedObject var browser: BrowserController
+    @ObservedObject var inspector: WebInspectorModel
 
     typealias NSViewType = WKWebView
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(inspector: browser.inspector)
+        Coordinator(browser: browser, inspector: inspector)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -47,14 +48,16 @@ struct WebView: NSViewRepresentable {
         let controller = WKUserContentController()
         controller.add(context.coordinator.handler, name: "wcInspector")
         controller.addUserScript(WKUserScript(source: InspectorScript.source,
-                                              injectionTime: .atDocumentStart,
-                                              forMainFrameOnly: false))
+                                               injectionTime: .atDocumentStart,
+                                               forMainFrameOnly: false))
         config.userContentController = controller
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.load(request(for: url))
+        webView.navigationDelegate = context.coordinator
         browser.register(webView)
+        browser.beginNavigation()
         context.coordinator.lastToken = reloadToken
         context.coordinator.lastURL = url
+        webView.load(request(for: url))
         return webView
     }
 
@@ -62,15 +65,14 @@ struct WebView: NSViewRepresentable {
         browser.register(webView)
         // URL change or manual reload → reload and clear captured data.
         if context.coordinator.lastURL != url || context.coordinator.lastToken != reloadToken {
+            browser.beginNavigation()
             webView.load(request(for: url))
             context.coordinator.lastURL = url
             context.coordinator.lastToken = reloadToken
-            browser.inspector.reset()
         }
         // Inspect-mode toggle → notify the page.
-        if context.coordinator.lastInspect != browser.inspector.inspectMode {
-            context.coordinator.lastInspect = browser.inspector.inspectMode
-            webView.evaluateJavaScript("window.__wcSetInspect && window.__wcSetInspect(\(browser.inspector.inspectMode));")
+        if context.coordinator.lastInspect != inspector.inspectMode {
+            context.coordinator.applyInspectMode(inspector.inspectMode, to: webView)
         }
     }
 
@@ -78,14 +80,64 @@ struct WebView: NSViewRepresentable {
         URLRequest(url: url ?? URL(string: "about:blank")!)
     }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, WKNavigationDelegate {
         let handler: InspectorMessageHandler
-        var lastInspect = false
+        weak var browser: BrowserController?
+        var lastInspect: Bool?
         var lastToken: UUID?
         var lastURL: URL?
 
-        init(inspector: WebInspectorModel) {
+        init(browser: BrowserController, inspector: WebInspectorModel) {
+            self.browser = browser
             self.handler = InspectorMessageHandler(model: inspector)
+        }
+
+        func applyInspectMode(_ enabled: Bool, to webView: WKWebView) {
+            lastInspect = enabled
+            let value = enabled ? "true" : "false"
+            webView.evaluateJavaScript("window.__wcSetInspect && window.__wcSetInspect(\(value));")
+        }
+
+        func webView(_ webView: WKWebView,
+                     didStartProvisionalNavigation navigation: WKNavigation!) {
+            Task { @MainActor [weak self, weak webView] in
+                guard let self, let webView else { return }
+                browser?.didStartNavigation(webView)
+            }
+        }
+
+        func webView(_ webView: WKWebView,
+                     didFinish navigation: WKNavigation!) {
+            Task { @MainActor [weak self, weak webView] in
+                guard let self, let webView else { return }
+                browser?.didFinishNavigation(webView)
+                // A reload creates a new JS world. Reapply the user's inspect
+                // choice after the instrumentation script is guaranteed to be
+                // installed, instead of racing document-start evaluation.
+                applyInspectMode(inspectorMode, to: webView)
+            }
+        }
+
+        func webView(_ webView: WKWebView,
+                     didFail navigation: WKNavigation!,
+                     withError error: Error) {
+            Task { @MainActor [weak self, weak webView] in
+                guard let self, let webView else { return }
+                browser?.didFailNavigation(webView, error: error)
+            }
+        }
+
+        func webView(_ webView: WKWebView,
+                     didFailProvisionalNavigation navigation: WKNavigation!,
+                     withError error: Error) {
+            Task { @MainActor [weak self, weak webView] in
+                guard let self, let webView else { return }
+                browser?.didFailNavigation(webView, error: error)
+            }
+        }
+
+        private var inspectorMode: Bool {
+            browser?.inspector.inspectMode ?? lastInspect ?? false
         }
     }
 }
@@ -179,6 +231,10 @@ struct PreviewView: View {
         .onReceive(NotificationCenter.default.publisher(for: .refreshPreview)) { _ in
             reload()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .requestPreviewInspectFromBridge)) { _ in
+            showInspector = true
+            browser.inspector.inspectMode = true
+        }
         .onAppear {
             device = Device(rawValue: persistedDevice) ?? .desktop
         }
@@ -243,8 +299,10 @@ struct PreviewView: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Theme.Chrome.textMuted)
                 } else {
-                    AmbientConnectionSignal(tint: Theme.success,
-                                             mode: .breathing,
+                    AmbientConnectionSignal(tint: browser.navigationError == nil
+                                             ? (browser.isLoading ? Theme.warning : Theme.success)
+                                             : Theme.danger,
+                                             mode: browser.isLoading ? .progress : .breathing,
                                              active: true,
                                              label: "Live preview connected")
                 }
@@ -480,7 +538,8 @@ struct PreviewView: View {
                     ? max(proxy.size.height / scale, 720)
                     : max(proxy.size.height, 1)
 
-                WebView(url: liveURL, reloadToken: reloadToken, browser: browser)
+                WebView(url: liveURL, reloadToken: reloadToken,
+                        browser: browser, inspector: browser.inspector)
                     .frame(width: viewportWidth, height: viewportHeight)
                     .scaleEffect(scale, anchor: .topLeading)
                     .frame(width: proxy.size.width,
@@ -494,7 +553,8 @@ struct PreviewView: View {
                 }
                 } else {
             ScrollView([.horizontal, .vertical]) {
-                WebView(url: liveURL, reloadToken: reloadToken, browser: browser)
+                WebView(url: liveURL, reloadToken: reloadToken,
+                        browser: browser, inspector: browser.inspector)
                     .frame(width: device.width)
                     .frame(minHeight: 600)
                     .background(Color.white)
@@ -512,6 +572,29 @@ struct PreviewView: View {
                 }
             }
             .animation(Motion.layout, value: device)
+
+            if let error = browser.navigationError {
+                HStack(spacing: Theme.Space.s) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Theme.danger)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
+                    Button("Reload") { reload() }
+                        .buttonStyle(.primarySoftCompact)
+                }
+                .padding(.horizontal, Theme.Space.m)
+                .padding(.vertical, Theme.Space.s)
+                .background(Theme.elevatedSurface.opacity(0.96),
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.small,
+                                                 style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
+                        .strokeBorder(Theme.danger.opacity(0.35), lineWidth: 1)
+                }
+                .padding(Theme.Space.l)
+            }
 
             PreviewRefreshSweep(active: isReloading)
                 .frame(height: 2)

@@ -293,6 +293,7 @@ enum InspectorScript {
         return '/' + parts.join('/');
       };
       var onMove = function(e) {
+        if (!inspectOn || !e.target || !e.target.getBoundingClientRect) { return; }
         var o = ensureOverlay();
         var r = e.target.getBoundingClientRect();
         o.style.display = 'block';
@@ -300,6 +301,7 @@ enum InspectorScript {
         o.style.width = r.width + 'px'; o.style.height = r.height + 'px';
       };
       var onClick = function(e) {
+        if (!inspectOn || !e.target || !e.target.tagName) { return; }
         e.preventDefault(); e.stopPropagation();
         var el = e.target;
         var cs = window.getComputedStyle(el);
@@ -307,6 +309,8 @@ enum InspectorScript {
         send({ type: 'element', tag: el.tagName.toLowerCase(), id: el.id || '', classes: (typeof el.className === 'string' ? el.className : ''), selector: selectorFor(el), xpath: xpathFor(el), styles: styles });
       };
       window.__wcSetInspect = function(on) {
+        on = !!on;
+        if (inspectOn === on) { return; }
         inspectOn = on;
         if (on) {
           document.addEventListener('mousemove', onMove, true);

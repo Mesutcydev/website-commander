@@ -9,6 +9,15 @@ enum ChatRole: String, Codable {
     case tool
 }
 
+/// Delivery state for a user message. Queued prompts are rendered immediately
+/// but are withheld from the model context until the active turn reaches a safe
+/// boundary. Optional storage keeps older saved conversations backwards
+/// compatible; a missing value means the message was already sent.
+enum ChatMessageDeliveryState: String, Codable {
+    case sent
+    case queued
+}
+
 /// A file the user attached to a chat message (an image or any file). Images go
 /// to vision-capable models; text files are inlined into the prompt.
 struct Attachment: Identifiable, Codable, Equatable {
@@ -60,9 +69,13 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     /// return any — never populated with synthetic content.
     var reasoning: String?
     var date: Date
+    /// A queued user message is visible in the transcript but is not part of
+    /// the LLM context until the current turn completes.
+    var deliveryState: ChatMessageDeliveryState?
 
     init(id: UUID = UUID(), role: ChatRole, text: String, toolEvents: [ToolEvent] = [],
-         attachments: [Attachment] = [], reasoning: String? = nil, date: Date = Date()) {
+         attachments: [Attachment] = [], reasoning: String? = nil, date: Date = Date(),
+         deliveryState: ChatMessageDeliveryState = .sent) {
         self.id = id
         self.role = role
         self.text = text
@@ -70,7 +83,11 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         self.attachments = attachments
         self.reasoning = reasoning
         self.date = date
+        self.deliveryState = deliveryState
     }
+
+    /// Treat legacy messages, which have no deliveryState key, as already sent.
+    var isQueued: Bool { deliveryState == .queued }
 }
 
 /// A record of one tool invocation, rendered inline under an assistant message.

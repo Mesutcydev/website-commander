@@ -1,7 +1,8 @@
 # Website Commander — VS Code extension
 
 Lets VS Code / Cursor drive the **Website Commander** macOS app: send the current
-file or selection to the agent, or pull a debug brief for the site you have open.
+file or selection to the agent, control the shared preview/inspector, run an audit,
+or pull a debug brief for the site you have open.
 
 It talks to the app over its **loopback agent bridge** — the same surface the
 `wc` CLI exposes — so the app must be running with the bridge enabled.
@@ -32,6 +33,9 @@ code --install-extension website-commander-0.1.0.vsix
 |---|---|
 | **Website Commander: Send selection to agent** | Sends the selection (or whole file) plus your instruction to the agent; you choose *stage* or *approve & commit*. |
 | **Website Commander: Debug current site** | Opens the app's debug brief (console/network/audit/repo path) in a tab and copies a tailored prompt to the clipboard. |
+| **Website Commander: Open preview** | Reveals the app's live Preview tab for the selected site. |
+| **Website Commander: Inspect preview** | Reveals Preview, opens the Inspector panel, and enables element picking. |
+| **Website Commander: Audit preview** | Runs the same client-side preview audit and opens the findings in a Markdown tab. |
 | **Website Commander: List sites** | Shows connected sites. |
 
 ## Settings

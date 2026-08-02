@@ -93,6 +93,10 @@ struct RootView: View {
                 route(to: .preview, then: .refreshPreview)
             case .requestAgentPreviewFromEngine:
                 route(to: .agent, then: .requestAgentPreview)
+            case .requestPreviewFromBridge:
+                destination = .preview
+            case .requestPreviewInspectFromBridge:
+                route(to: .preview, then: .requestPreviewInspectFromBridge)
             case .requestAgentSendFromMenu:
                 route(to: .agent, then: .requestAgentSend)
             case .requestAgentStopFromMenu:
@@ -190,6 +194,8 @@ struct RootView: View {
         return center.publisher(for: .requestOpenInVSCode)
             .merge(with: center.publisher(for: .requestRefreshPreview))
             .merge(with: center.publisher(for: .requestAgentPreviewFromEngine))
+            .merge(with: center.publisher(for: .requestPreviewFromBridge))
+            .merge(with: center.publisher(for: .requestPreviewInspectFromBridge))
             .merge(with: center.publisher(for: .requestAgentSendFromMenu))
             .merge(with: center.publisher(for: .requestAgentStopFromMenu))
             .merge(with: center.publisher(for: .requestApproveAllFromMenu))

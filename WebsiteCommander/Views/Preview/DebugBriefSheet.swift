@@ -287,8 +287,17 @@ struct DebugBriefSheet: View {
 
     private func capture() async {
         let ws = settings.activeWorkspace
-        let html = await browser.snapshotHTML()
-        let audit = SiteAuditor.audit(html: html, inspector: browser.inspector)
+        let hasLiveURL = ws.flatMap { SiteWorkspace.normalizedLiveURL($0.configuredLiveURL) } != nil
+        let ready = hasLiveURL ? await browser.ensureAvailable() : false
+        let html = ready ? await browser.snapshotHTML() : ""
+        // Do not attribute breadcrumbs from the previously selected site to a
+        // missing or failed navigation for the current site.
+        let inspector = ready ? browser.inspector : nil
+        let audit = ready
+            ? SiteAuditor.audit(html: html, inspector: browser.inspector)
+            : [SiteAuditIssue(title: "Preview unavailable",
+                              detail: browser.navigationError ?? "The live preview could not finish loading.",
+                              severity: .critical)]
         let injection = PromptGuard.injectionFindings(in: html)
         let path = ws.flatMap { LocalWorkspaceStore.isCloned($0) ? LocalWorkspaceStore.localPath(for: $0).path : nil }
         repoPath = path
@@ -298,13 +307,15 @@ struct DebugBriefSheet: View {
             context: .init(siteName: ws?.name ?? "—", slug: ws?.slug ?? "—", branch: ws?.gitBranch ?? "—",
                            liveURL: ws?.configuredLiveURL ?? "", repoPath: path,
                            techStack: ws?.techStack.rawValue ?? "—", deployment: ws?.deployment.rawValue ?? "—"),
-            consoleErrors: browser.inspector.consoleLogs.filter { $0.level == .error }.map { $0.text },
-            consoleWarnings: browser.inspector.consoleLogs.filter { $0.level == .warn }.map { $0.text },
-            failedRequests: browser.inspector.networkRequests.filter { ($0.status ?? 0) >= 400 }
-                .map { DebugBrief.Request(method: $0.method, url: $0.url, status: $0.status ?? 0) },
-            loadMs: browser.inspector.performance.loadTimeMs,
-            domReadyMs: browser.inspector.performance.domReadyMs,
-            transferKB: browser.inspector.performance.transferKB,
+            consoleErrors: inspector?.consoleLogs.filter { $0.level == .error }.map { $0.text } ?? [],
+            consoleWarnings: inspector?.consoleLogs.filter { $0.level == .warn }.map { $0.text } ?? [],
+            failedRequests: inspector?.networkRequests.compactMap { request in
+                guard let status = request.status, status == 0 || status >= 400 else { return nil }
+                return DebugBrief.Request(method: request.method, url: request.url, status: status)
+            } ?? [],
+            loadMs: inspector?.performance.loadTimeMs,
+            domReadyMs: inspector?.performance.domReadyMs,
+            transferKB: inspector?.performance.transferKB,
             audit: audit.map { DebugBrief.Finding(severity: $0.severity.rawValue, title: $0.title, detail: $0.detail) },
             injection: injection,
             lastAgentError: engine.lastError,

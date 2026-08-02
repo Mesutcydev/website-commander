@@ -33,23 +33,36 @@ final class BrowserController: ObservableObject {
 
     @Published var currentURL: URL?
     @Published var pageTitle: String = ""
+    @Published private(set) var isLoading = false
+    @Published private(set) var navigationError: String?
     /// Set when a tool captures a screenshot for a vision model; the engine
     /// forwards it into the model context, then clears it.
     @Published var pendingScreenshotBase64: String?
 
     var isAvailable: Bool { webView != nil }
+    var isReady: Bool {
+        webView != nil && !isLoading && navigationError == nil
+    }
 
     /// Browser tools may be requested while the Preview pane is closed. Ask the
     /// workspace to reveal it and briefly wait for SwiftUI/WebKit to register
     /// the live view, so model tools do not fail because of UI presentation.
     func ensureAvailable() async -> Bool {
-        if isAvailable { return true }
+        if isReady { return true }
+        if navigationError != nil, let webView {
+            // A previous load can fail while the web view remains mounted. A
+            // later agent turn should be able to recover without requiring a
+            // human to visit Preview and press Reload first.
+            beginNavigation()
+            webView.reload()
+        }
         NotificationCenter.default.post(name: .requestAgentPreviewFromEngine, object: nil)
-        for _ in 0..<30 {
-            if isAvailable { return true }
+        for _ in 0..<120 {
+            if isReady { return true }
+            if Task.isCancelled { return false }
             try? await Task.sleep(for: .milliseconds(100))
         }
-        return isAvailable
+        return isReady
     }
 
     func register(_ webView: WKWebView) {
@@ -59,10 +72,43 @@ final class BrowserController: ObservableObject {
         // Only publish when the browser or URL has genuinely changed.
         if self.webView !== webView {
             self.webView = webView
+            isLoading = true
+            navigationError = nil
         }
         if currentURL != webView.url {
             currentURL = webView.url
         }
+    }
+
+    func beginNavigation() {
+        isLoading = true
+        navigationError = nil
+        inspector.reset()
+    }
+
+    func didStartNavigation(_ webView: WKWebView) {
+        isLoading = true
+        navigationError = nil
+        if let url = webView.url { currentURL = url }
+        inspector.reset()
+    }
+
+    func didFinishNavigation(_ webView: WKWebView) {
+        isLoading = false
+        navigationError = nil
+        currentURL = webView.url ?? currentURL
+        pageTitle = webView.title ?? ""
+    }
+
+    func didFailNavigation(_ webView: WKWebView, error: Error) {
+        // Replacing a load or closing the preview produces a cancellation
+        // callback. It is not a user-visible navigation failure and must not
+        // poison the readiness state for the next page.
+        if (error as NSError).code == NSURLErrorCancelled { return }
+        isLoading = false
+        navigationError = error.localizedDescription
+        currentURL = webView.url ?? currentURL
+        pageTitle = webView.title ?? ""
     }
 
     // MARK: Primitive: run JS
@@ -98,7 +144,8 @@ final class BrowserController: ObservableObject {
 
     /// The full rendered HTML of the page.
     func snapshotHTML() async -> String {
-        (try? await evaluate("document.documentElement.outerHTML")) ?? ""
+        guard await ensureAvailable() else { return "" }
+        return (try? await evaluate("document.documentElement.outerHTML")) ?? ""
     }
 
     /// Capture a PNG screenshot of the web view (for vision models).
@@ -120,7 +167,10 @@ final class BrowserController: ObservableObject {
     /// A compact text snapshot for non-vision "look" calls: URL, title, console
     /// errors, failed requests, performance, and a trimmed DOM text outline.
     func snapshotSummary() async -> String {
-        guard webView != nil else { return "The preview browser isn't open." }
+        guard await ensureAvailable() else {
+            if let navigationError { return "The preview browser could not load the page: \(navigationError)" }
+            return "The preview browser isn't open."
+        }
         let url = (try? await evaluate("location.href")) ?? currentURL?.absoluteString ?? "?"
         let title = (try? await evaluate("document.title")) ?? ""
         let domText = (try? await evaluate("document.body ? document.body.innerText.replace(/\\n{2,}/g,'\\n').slice(0, 4000) : ''")) ?? ""
@@ -132,7 +182,10 @@ final class BrowserController: ObservableObject {
         for log in inspector.consoleLogs.filter({ $0.level == .error }).suffix(5) {
             lines.append("  console.error: \(log.text)")
         }
-        let failed = inspector.networkRequests.filter { ($0.status ?? 0) >= 400 }
+        let failed = inspector.networkRequests.filter {
+            guard let status = $0.status else { return false }
+            return status == 0 || status >= 400
+        }
         if !failed.isEmpty {
             lines.append("Failed requests: \(failed.count)")
             for r in failed.suffix(5) { lines.append("  \(r.method) \(r.url) → \(r.status ?? 0)") }
@@ -154,6 +207,7 @@ final class BrowserController: ObservableObject {
               url.host != nil else {
             throw BrowserError.unsupportedScheme
         }
+        beginNavigation()
         webView.load(URLRequest(url: url))
         currentURL = url
     }
