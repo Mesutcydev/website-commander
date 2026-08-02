@@ -389,12 +389,21 @@ struct ChatView: View {
                 // `_postWindowNeedsUpdateConstraints` and crashes the app mid
                 // stream — which relaunches into an empty Agent idle surface.
                 DispatchQueue.main.async {
-                    isNearTranscriptBottom = bottom <= transcriptViewportHeight + 96 || bottom.isZero
-                    if isNearTranscriptBottom { hasUnseenActivity = false }
+                    guard bottom.isFinite else { return }
+                    let nearBottom = bottom <= transcriptViewportHeight + 96 || bottom.isZero
+                    guard nearBottom != isNearTranscriptBottom || (nearBottom && hasUnseenActivity) else {
+                        return
+                    }
+                    isNearTranscriptBottom = nearBottom
+                    if nearBottom { hasUnseenActivity = false }
                 }
             }
             .onPreferenceChange(TranscriptViewportKey.self) { height in
-                DispatchQueue.main.async { transcriptViewportHeight = height }
+                DispatchQueue.main.async {
+                    guard height.isFinite,
+                          LayoutStability.differs(transcriptViewportHeight, height) else { return }
+                    transcriptViewportHeight = height
+                }
             }
             .onPreferenceChange(HeadingBottomKey.self) { top in
                 DispatchQueue.main.async { onScrolledUnder?(top < -2) }

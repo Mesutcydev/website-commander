@@ -104,6 +104,17 @@ final class WebsiteCommanderTests: XCTestCase {
         XCTAssertEqual(WorkspaceLayout.clampedAgentWidth(900, in: 1100), 460)
     }
 
+    func testLayoutStabilityFiltersRepeatedAndSubpixelMeasurements() {
+        let measured = CGSize(width: 1440, height: 900)
+        XCTAssertFalse(LayoutStability.differs(measured, measured))
+        XCTAssertFalse(LayoutStability.differs(measured,
+                                               CGSize(width: 1440.4, height: 900.4)))
+        XCTAssertTrue(LayoutStability.differs(measured,
+                                              CGSize(width: 1441, height: 900)))
+        XCTAssertFalse(LayoutStability.differs(measured,
+                                               CGSize(width: CGFloat.nan, height: 900)))
+    }
+
     func testToolEventsCollapseIntoSemanticGroupsAndPreserveFailures() {
         let events = [
             ToolEvent(name: "read_file", summary: "Read a.swift", status: .success),

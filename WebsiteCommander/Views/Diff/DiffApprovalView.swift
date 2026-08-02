@@ -369,11 +369,13 @@ struct DiffApprovalView: View {
                 .buttonStyle(.iconCompact)
                 .help("Find in diff")
                 .keyboardShortcut("f", modifiers: [.command])
-                Picker("Diff layout", selection: $sideBySide) {
-                    Text("Unified").tag(false)
-                    Text("Side by side").tag(true)
+                WCInlineSegmentedControl(
+                    selection: $sideBySide,
+                    items: [false, true],
+                    accessibilityLabel: "Diff layout"
+                ) { isSideBySide in
+                    Text(isSideBySide ? "Side by side" : "Unified")
                 }
-                .pickerStyle(.segmented)
                 .frame(width: 168, height: Theme.Height.compact)
             }
         }

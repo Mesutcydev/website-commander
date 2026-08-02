@@ -45,10 +45,13 @@ struct AddWorkspaceSheet: View {
                     accountPicker
                     if !hasToken { tokenBanner }
 
-                    Picker("How do you want to add it?", selection: $source) {
-                        ForEach(Source.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    WCInlineSegmentedControl(
+                        selection: $source,
+                        items: Array(Source.allCases),
+                        accessibilityLabel: "How do you want to add it?"
+                    ) { option in
+                        Text(option.rawValue)
                     }
-                    .pickerStyle(.segmented)
 
                     if source == .pick { repoPicker } else { manualFields }
 

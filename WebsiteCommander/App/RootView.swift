@@ -2,6 +2,26 @@ import SwiftUI
 import AppKit
 import Combine
 
+/// Small, deterministic guards for values measured during SwiftUI layout.
+/// AppKit can report the same geometry more than once (and occasionally with
+/// sub-pixel noise); publishing every report turns a measurement into a state
+/// feedback loop.
+enum LayoutStability {
+    static let epsilon: CGFloat = 0.5
+
+    static func differs(_ lhs: CGFloat, _ rhs: CGFloat,
+                        epsilon: CGFloat = LayoutStability.epsilon) -> Bool {
+        guard lhs.isFinite, rhs.isFinite else { return false }
+        return abs(lhs - rhs) > epsilon
+    }
+
+    static func differs(_ lhs: CGSize, _ rhs: CGSize,
+                        epsilon: CGFloat = LayoutStability.epsilon) -> Bool {
+        differs(lhs.width, rhs.width, epsilon: epsilon)
+            || differs(lhs.height, rhs.height, epsilon: epsilon)
+    }
+}
+
 /// The Mac shell: one compact application bar over a full-width workspace.
 ///
 /// There is no sidebar and no reserved sidebar width — the bar carries the
@@ -272,10 +292,11 @@ struct RootView: View {
                         // Defer size→state writes so AppKit is not asked for
                         // another constraints pass while still inside one.
                         .onAppear {
-                            DispatchQueue.main.async { shellSize = proxy.size }
+                            let size = proxy.size
+                            DispatchQueue.main.async { publishShellSize(size) }
                         }
                         .onChange(of: proxy.size) { _, size in
-                            DispatchQueue.main.async { shellSize = size }
+                            DispatchQueue.main.async { publishShellSize(size) }
                         }
                 }
             }
@@ -287,6 +308,11 @@ struct RootView: View {
 
     private var destinationBinding: Binding<Destination> {
         Binding(get: { current }, set: { destination = $0 })
+    }
+
+    private func publishShellSize(_ size: CGSize) {
+        guard LayoutStability.differs(shellSize, size) else { return }
+        shellSize = size
     }
 
     /// The workspace fills everything under the bar. Each destination owns its

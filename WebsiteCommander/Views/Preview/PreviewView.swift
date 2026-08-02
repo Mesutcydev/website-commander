@@ -387,13 +387,13 @@ struct PreviewView: View {
     }
 
     private var devicePicker: some View {
-        Picker("", selection: $device) {
-            ForEach(Device.allCases) { d in
-                Label(LocalizedStringKey(d.rawValue), systemImage: d.icon).tag(d)
-            }
+        WCInlineSegmentedControl(
+            selection: $device,
+            items: Array(Device.allCases),
+            accessibilityLabel: "Viewport preset"
+        ) { d in
+            Label(LocalizedStringKey(d.rawValue), systemImage: d.icon)
         }
-        .labelsHidden()
-        .pickerStyle(.segmented)
         .frame(width: 190)
         .help("Viewport preset")
     }
@@ -706,10 +706,13 @@ struct InspectorPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: Theme.Space.m) {
-                Picker("", selection: $tab) {
-                    ForEach(Tab.allCases) { t in Label(t.rawValue, systemImage: t.icon).tag(t) }
+                WCInlineSegmentedControl(
+                    selection: $tab,
+                    items: Array(Tab.allCases),
+                    accessibilityLabel: "Inspector panel"
+                ) { t in
+                    Label(t.rawValue, systemImage: t.icon)
                 }
-                .pickerStyle(.segmented)
                 .frame(width: 360)
 
                 Spacer()
@@ -749,10 +752,13 @@ private struct ConsolePanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: Theme.Space.s) {
-                Picker("", selection: $inspector.consoleFilter) {
-                    ForEach(WebInspectorModel.ConsoleFilter.allCases) { Text($0.rawValue).tag($0) }
+                WCInlineSegmentedControl(
+                    selection: $inspector.consoleFilter,
+                    items: Array(WebInspectorModel.ConsoleFilter.allCases),
+                    accessibilityLabel: "Console filter"
+                ) { filter in
+                    Text(filter.rawValue)
                 }
-                .pickerStyle(.segmented)
                 .frame(width: 320)
                 Spacer()
                 if let element = inspector.inspectedElement {

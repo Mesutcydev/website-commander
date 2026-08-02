@@ -1,5 +1,70 @@
 import SwiftUI
 
+// MARK: - Stable segmented control
+
+/// A compact segmented control rendered entirely by SwiftUI.
+///
+/// macOS 27 can repeatedly re-enter AppKit while measuring SwiftUI's native
+/// `.pickerStyle(.segmented)` bridge, especially when a segment contains an SF
+/// Symbol. Keeping this control in the SwiftUI layout graph avoids that
+/// platform bridge while preserving the same keyboard, focus, and accessibility
+/// semantics as a small set of mutually exclusive buttons.
+struct WCInlineSegmentedControl<Selection: Hashable, LabelContent: View>: View {
+    @Binding private var selection: Selection
+    private let items: [Selection]
+    private let accessibilityLabel: String
+    private let labelContent: (Selection) -> LabelContent
+
+    init(
+        selection: Binding<Selection>,
+        items: [Selection],
+        accessibilityLabel: String,
+        @ViewBuilder label: @escaping (Selection) -> LabelContent
+    ) {
+        _selection = selection
+        self.items = items
+        self.accessibilityLabel = accessibilityLabel
+        self.labelContent = label
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.self) { item in
+                let isSelected = selection == item
+                Button {
+                    // Do not publish a redundant binding write. This matters
+                    // when the control is embedded in a measured toolbar.
+                    guard selection != item else { return }
+                    selection = item
+                } label: {
+                    labelContent(item)
+                        .font(Theme.ui(11.5, isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? Theme.accent : Theme.secondaryText)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(
+                    isSelected ? Theme.accentSoft : .clear,
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.badge,
+                                         style: .continuous)
+                )
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+            }
+        }
+        .padding(2)
+        .frame(maxWidth: .infinity)
+        .background(
+            Theme.secondarySurface,
+            in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
 // MARK: - Icon tile
 
 /// A compact SF Symbol tile. Neutral tint is the default; callers opt into the
