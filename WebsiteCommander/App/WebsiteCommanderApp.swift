@@ -10,6 +10,7 @@ struct WebsiteCommanderApp: App {
     @StateObject private var bridge: LocalBridge
     @StateObject private var conversations: ConversationStore
     @StateObject private var updater: UpdateChecker
+    @StateObject private var ambientMotion: AmbientMotionCoordinator
 
     init() {
         let settings = SettingsStore()
@@ -22,6 +23,7 @@ struct WebsiteCommanderApp: App {
         let bridge = LocalBridge()
         bridge.settings = settings
         bridge.engine = engine
+        bridge.browser = browser
         _settings = StateObject(wrappedValue: settings)
         _browser = StateObject(wrappedValue: browser)
         _cloudSync = StateObject(wrappedValue: cloudSync)
@@ -29,6 +31,7 @@ struct WebsiteCommanderApp: App {
         _updater = StateObject(wrappedValue: updater)
         _engine = StateObject(wrappedValue: engine)
         _bridge = StateObject(wrappedValue: bridge)
+        _ambientMotion = StateObject(wrappedValue: AmbientMotionCoordinator())
         // Push to iCloud after every local persist (no-op unless sync is on).
         settings.onPersist = { [weak cloudSync, weak settings] in
             guard let cloudSync, let settings else { return }
@@ -46,6 +49,7 @@ struct WebsiteCommanderApp: App {
                 .environmentObject(bridge)
                 .environmentObject(conversations)
                 .environmentObject(updater)
+                .environmentObject(ambientMotion)
                 // Low enough that the bar's narrowest density tier is a real
                 // state a user can reach, not dead code.
                 .frame(minWidth: 760, minHeight: 620)
@@ -65,7 +69,7 @@ struct WebsiteCommanderApp: App {
                 }
         }
         // The application bar *is* the titlebar band: hiding the native one is
-        // what lets a 68pt bar be the app's only chrome instead of sitting under
+        // what lets a 56pt bar be the app's only chrome instead of sitting under
         // an empty 28pt strip. The bar reserves leading room for the traffic
         // lights and makes its own background drag the window.
         .windowStyle(.hiddenTitleBar)
@@ -82,16 +86,16 @@ struct WebsiteCommanderApp: App {
             }
             CommandMenu("Agent") {
                 Button("Send Message") {
-                    NotificationCenter.default.post(name: .requestAgentSend, object: nil)
+                    NotificationCenter.default.post(name: .requestAgentSendFromMenu, object: nil)
                 }
                 .keyboardShortcut(.return, modifiers: .command)
                 Button("Stop") {
-                    NotificationCenter.default.post(name: .requestAgentStop, object: nil)
+                    NotificationCenter.default.post(name: .requestAgentStopFromMenu, object: nil)
                 }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(!engine.isRunActive)
                 Button("Approve All Changes") {
-                    NotificationCenter.default.post(name: .requestApproveAll, object: nil)
+                    NotificationCenter.default.post(name: .requestApproveAllFromMenu, object: nil)
                 }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
                 .disabled(engine.pendingChanges.isEmpty)
@@ -103,9 +107,9 @@ struct WebsiteCommanderApp: App {
                 .disabled(updater.checking || updater.installing)
             }
             CommandMenu("Site") {
-                Button("Open in VSCode") { NotificationCenter.default.post(name: .openInVSCode, object: nil) }
+                Button("Open in VSCode") { NotificationCenter.default.post(name: .requestOpenInVSCode, object: nil) }
                     .keyboardShortcut("v", modifiers: [.command, .shift])
-                Button("Refresh Preview") { NotificationCenter.default.post(name: .refreshPreview, object: nil) }
+                Button("Refresh Preview") { NotificationCenter.default.post(name: .requestRefreshPreview, object: nil) }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                 Button("Debug Current Site") { NotificationCenter.default.post(name: .requestDebug, object: nil) }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
@@ -119,6 +123,7 @@ struct WebsiteCommanderApp: App {
                 .environmentObject(cloudSync)
                 .environmentObject(bridge)
                 .environmentObject(updater)
+                .environmentObject(ambientMotion)
                 // No height here: the window sizes to the selected page (see
                 // `SettingsMetrics`), so a short form doesn't leave dead space.
                 .preferredColorScheme(settings.themeMode.colorScheme)

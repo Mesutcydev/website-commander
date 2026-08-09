@@ -42,6 +42,18 @@ enum DeploymentService {
         return raw.isEmpty ? nil : raw
     }
 
+    /// Reads the deploy-hook secret without blocking the main actor. Hook URLs
+    /// often contain a credential-like path segment, so the Keychain access is
+    /// deliberately kept out of view layout and approval transitions.
+    static func hookURLAsync(for workspaceID: UUID) async -> String? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let raw = Keychain.get(hookKey(workspaceID))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                continuation.resume(returning: raw.isEmpty ? nil : raw)
+            }
+        }
+    }
+
     static var supportsHook: (DeploymentType) -> Bool = { type in
         switch type {
         case .cloudflarePages, .vercel, .netlify: return true
@@ -57,7 +69,8 @@ enum DeploymentService {
         case .sshFtp:
             return .manual
         case .cloudflarePages, .vercel, .netlify:
-            guard let raw = hookURL(for: workspace.id), let url = URL(string: raw) else {
+            guard let raw = await hookURLAsync(for: workspace.id),
+                  let url = SiteWorkspace.normalizedLiveURL(raw) else {
                 return .noHook
             }
             return await post(url)

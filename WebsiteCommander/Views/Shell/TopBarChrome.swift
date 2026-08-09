@@ -17,14 +17,9 @@ struct TopBarMaterial: View {
             if reduceTransparency {
                 Rectangle().fill(Theme.Chrome.barFillOpaque)
             } else {
-                Rectangle().fill(.bar)
-                Rectangle().fill(Theme.Chrome.barFill)
+                Rectangle().fill(.ultraThinMaterial)
+                Rectangle().fill(Theme.Chrome.barGradient)
             }
-        }
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Theme.Chrome.barHighlight)
-                .frame(height: 1)
         }
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -71,7 +66,7 @@ enum TopBarEmphasis {
     case quiet
     /// A resting translucent tint. For the project control.
     case resting
-    /// The selected state inside a group: elevated surface + hairline.
+    /// The selected state: a restrained tint without a raised pill.
     case selected
     /// The primary contextual action, using the product accent sparingly.
     case accent
@@ -103,21 +98,9 @@ struct TopBarControlSurface: View {
                     shape.strokeBorder(border, lineWidth: 1)
                 }
             }
-            .overlay(alignment: .top) {
-                if showsInnerHighlight {
-                    shape
-                        .strokeBorder(Theme.Chrome.barHighlight.opacity(0.55), lineWidth: 1)
-                        .mask(
-                            LinearGradient(colors: [.white, .clear],
-                                           startPoint: .top,
-                                           endPoint: .center)
-                        )
-                }
-            }
-            // The selected surface is the one control that lifts off the bar,
-            // and it lifts by a hair — never by a coloured glow.
-            .shadow(color: showsInnerHighlight ? Theme.Shadow.ambient : .clear, radius: 1, y: 1)
-            .shadow(color: showsInnerHighlight ? Theme.Shadow.key : .clear, radius: 5, y: 2)
+            .shadow(color: isAccent ? Theme.Shadow.key : .clear,
+                    radius: isAccent ? 6 : 0,
+                    y: isAccent ? 2 : 0)
     }
 
     private var fill: AnyShapeStyle {
@@ -130,7 +113,8 @@ struct TopBarControlSurface: View {
             return AnyShapeStyle(isHovering ? Theme.Chrome.barControlHover : Theme.Chrome.barControlFill)
         case .selected:
             if isPressed { return AnyShapeStyle(Theme.Chrome.barControlPressed) }
-            return AnyShapeStyle(Theme.Chrome.barControlActive)
+            if isHovering { return AnyShapeStyle(Theme.Chrome.barControlHover) }
+            return AnyShapeStyle(Theme.Chrome.barControlActiveGradient)
         case .accent:
             let base = isPressed ? Theme.accentPressed : Theme.accent
             return AnyShapeStyle(isHovering && !isPressed ? Theme.accentHover : base)
@@ -148,7 +132,7 @@ struct TopBarControlSurface: View {
     private var border: Color? {
         switch emphasis {
         case .quiet: return nil
-        case .resting: return Theme.Chrome.barControlBorder
+        case .resting: return nil
         case .selected: return Theme.Chrome.barControlBorderActive
         case .accent: return nil
         case .tinted(let accent): return accent.color.opacity(0.22)
@@ -156,11 +140,9 @@ struct TopBarControlSurface: View {
         }
     }
 
-    private var showsInnerHighlight: Bool {
-        switch emphasis {
-        case .selected: return true
-        default: return false
-        }
+    private var isAccent: Bool {
+        if case .accent = emphasis { return true }
+        return false
     }
 }
 
@@ -226,8 +208,7 @@ struct TopBarControlButtonStyle: ButtonStyle {
     }
 }
 
-/// A 32×32 icon action. Every one carries an accessible name, a tooltip, and a
-/// focus ring; none of them is smaller than the 32pt target.
+    /// A compact icon action with an accessible name, tooltip, and focus ring.
 struct TopBarIconButton: View {
     let title: String
     let systemImage: String

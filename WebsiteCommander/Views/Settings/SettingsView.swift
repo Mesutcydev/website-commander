@@ -195,8 +195,11 @@ struct SettingsPage<Content: View>: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .onPreferenceChange(SettingsPageHeightKey.self) { height in
-            guard height > 0 else { return }
-            naturalHeight = height
+            guard height.isFinite, height > 0 else { return }
+            let stableHeight = min(max(height, SettingsMetrics.minPageHeight),
+                                   SettingsMetrics.maxPageHeight)
+            guard LayoutStability.differs(naturalHeight, stableHeight) else { return }
+            naturalHeight = stableHeight
         }
         .frame(height: min(max(naturalHeight, SettingsMetrics.minPageHeight),
                            SettingsMetrics.maxPageHeight))
@@ -650,14 +653,13 @@ struct ProviderSettingsTab: View {
                 if settings.smartRouting {
                     SettingsRowDivider()
                     FormRow(label: "Strategy", footnote: settings.routingStrategy.detail) {
-                        Picker("", selection: $settings.routingStrategy) {
-                            ForEach(RoutingStrategy.allCases) { strategy in
-                                Text(strategy.rawValue).tag(strategy)
-                            }
+                        WCInlineSegmentedControl(
+                            selection: $settings.routingStrategy,
+                            items: Array(RoutingStrategy.allCases),
+                            accessibilityLabel: "Strategy"
+                        ) { strategy in
+                            Text(strategy.rawValue)
                         }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .accessibilityLabel("Strategy")
                     }
                 }
             }
@@ -787,14 +789,13 @@ struct BehaviorSettingsTab: View {
 
             SettingsSection(title: "Appearance") {
                 FormRow(label: "Appearance", footnote: appearanceDetail) {
-                    Picker("", selection: $settings.themeMode) {
-                        ForEach(ThemeMode.allCases) { mode in
-                            Label(mode.rawValue, systemImage: mode.icon).tag(mode)
-                        }
+                    WCInlineSegmentedControl(
+                        selection: $settings.themeMode,
+                        items: Array(ThemeMode.allCases),
+                        accessibilityLabel: "Appearance"
+                    ) { mode in
+                        Label(mode.rawValue, systemImage: mode.icon)
                     }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .accessibilityLabel("Appearance")
                 }
             }
 

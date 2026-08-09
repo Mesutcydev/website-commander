@@ -59,7 +59,7 @@ struct CommandPaletteView: View {
                            systemImage: "gearshape.fill") { dismiss(); openSettings() })
         list.append(Action(id: "vscode", title: "Open Active Site in VS Code", subtitle: "Edit the local clone",
                            systemImage: "chevron.left.forwardslash.chevron.right") {
-            NotificationCenter.default.post(name: .openInVSCode, object: nil); dismiss()
+            NotificationCenter.default.post(name: .requestOpenInVSCode, object: nil); dismiss()
         })
         return list
     }
@@ -95,16 +95,21 @@ struct CommandPaletteView: View {
                                 .padding(Theme.Space.xl)
                         }
                         ForEach(Array(filtered.enumerated()), id: \.element.id) { idx, action in
-                            row(action, selected: idx == cursor)
-                                .id(idx)
-                                .onTapGesture { action.run() }
+                            Button { action.run() } label: {
+                                row(action, selected: idx == cursor)
+                            }
+                            .buttonStyle(.plain)
+                            .id(action.id)
+                            .accessibilityLabel("\(action.title). \(action.subtitle)")
+                            .accessibilityHint("Press Return to run")
                         }
                     }
                     .padding(Theme.Space.s)
                 }
                 .frame(height: min(CGFloat(filtered.count) * 46 + 16, 360))
                 .onChange(of: cursor) { _, new in
-                    withAnimation { proxy.scrollTo(new, anchor: .center) }
+                    guard filtered.indices.contains(new) else { return }
+                    withAnimation { proxy.scrollTo(filtered[new].id, anchor: .center) }
                 }
             }
         }

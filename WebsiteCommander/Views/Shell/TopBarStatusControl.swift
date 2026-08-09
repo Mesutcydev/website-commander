@@ -60,13 +60,12 @@ enum AgentStatusPresentation: String, CaseIterable {
 /// change cannot shift anything beside it.
 struct TopBarStatusControl: View {
     let status: AgentStatusPresentation
+    let isConnected: Bool
     /// Narrow windows drop the label; the popover keeps it discoverable.
     let showsLabel: Bool
     let isOpen: Bool
     let onToggle: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulsing = false
     @FocusState private var isFocused: Bool
 
     /// A fixed label column: "Thinking" and "Ready" must occupy the same space
@@ -76,12 +75,12 @@ struct TopBarStatusControl: View {
     var body: some View {
         Button(action: onToggle) {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(status.indicatorColor)
-                    .frame(width: TopBarMetrics.statusDotSize,
-                           height: TopBarMetrics.statusDotSize)
-                    .scaleEffect(animating ? 1.3 : 1)
-                    .opacity(animating ? 0.5 : 1)
+                AmbientConnectionSignal(
+                    tint: status.indicatorColor,
+                    mode: status == .thinking || status == .working ? .progress : .breathing,
+                    active: status == .ready ? isConnected : status.animates,
+                    label: status.label
+                )
                 if showsLabel {
                     Text(status.label)
                         .font(Theme.ui(12, .medium))
@@ -104,25 +103,11 @@ struct TopBarStatusControl: View {
         .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
         .topBarTrigger(.status)
         .animation(Theme.Chrome.Timing.status, value: status)
-        .onAppear { restartIndicator() }
-        .onChange(of: status) { _, _ in restartIndicator() }
-        .onChange(of: reduceMotion) { _, _ in restartIndicator() }
         .onChange(of: isOpen) { wasOpen, open in
             if wasOpen && !open { isFocused = true }
         }
     }
 
-    private var animating: Bool { pulsing && status.animates && !reduceMotion }
-
-    /// One restrained 1.6s cycle on the indicator only — never the pill, never
-    /// three bouncing dots.
-    private func restartIndicator() {
-        pulsing = false
-        guard status.animates, !reduceMotion else { return }
-        withAnimation(Theme.Chrome.Timing.activity.repeatForever(autoreverses: true)) {
-            pulsing = true
-        }
-    }
 }
 
 // MARK: - Popover

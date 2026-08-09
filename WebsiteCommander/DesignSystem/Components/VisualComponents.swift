@@ -1,5 +1,70 @@
 import SwiftUI
 
+// MARK: - Stable segmented control
+
+/// A compact segmented control rendered entirely by SwiftUI.
+///
+/// macOS 27 can repeatedly re-enter AppKit while measuring SwiftUI's native
+/// `.pickerStyle(.segmented)` bridge, especially when a segment contains an SF
+/// Symbol. Keeping this control in the SwiftUI layout graph avoids that
+/// platform bridge while preserving the same keyboard, focus, and accessibility
+/// semantics as a small set of mutually exclusive buttons.
+struct WCInlineSegmentedControl<Selection: Hashable, LabelContent: View>: View {
+    @Binding private var selection: Selection
+    private let items: [Selection]
+    private let accessibilityLabel: String
+    private let labelContent: (Selection) -> LabelContent
+
+    init(
+        selection: Binding<Selection>,
+        items: [Selection],
+        accessibilityLabel: String,
+        @ViewBuilder label: @escaping (Selection) -> LabelContent
+    ) {
+        _selection = selection
+        self.items = items
+        self.accessibilityLabel = accessibilityLabel
+        self.labelContent = label
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.self) { item in
+                let isSelected = selection == item
+                Button {
+                    // Do not publish a redundant binding write. This matters
+                    // when the control is embedded in a measured toolbar.
+                    guard selection != item else { return }
+                    selection = item
+                } label: {
+                    labelContent(item)
+                        .font(Theme.ui(11.5, isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? Theme.accent : Theme.secondaryText)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(
+                    isSelected ? Theme.accentSoft : .clear,
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.badge,
+                                         style: .continuous)
+                )
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+            }
+        }
+        .padding(2)
+        .frame(maxWidth: .infinity)
+        .background(
+            Theme.secondarySurface,
+            in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
 // MARK: - Icon tile
 
 /// A compact SF Symbol tile. Neutral tint is the default; callers opt into the
@@ -10,7 +75,7 @@ struct IconTile: View {
     /// The container behind the glyph. Defaults to a soft tint of `tint`, but a
     /// semantic accent can supply its own paired surface.
     var surface: Color?
-    var size: CGFloat = 40
+    var size: CGFloat = Theme.Height.icon
     var gradient: Bool = false
 
     var body: some View {
@@ -29,7 +94,7 @@ struct IconTile: View {
 extension IconTile {
     /// A tile in one of the app's semantic accents: accent glyph on its paired
     /// soft surface.
-    init(systemImage: String, accent: Theme.Accent, size: CGFloat = 40) {
+    init(systemImage: String, accent: Theme.Accent, size: CGFloat = Theme.Height.icon) {
         self.init(systemImage: systemImage,
                   tint: accent.color,
                   surface: accent.soft,
@@ -96,7 +161,7 @@ struct StatTile: View {
 
 // MARK: - Badge
 
-/// A small pill badge (tech stack, deployment target, status). Neutral by
+/// A compact status badge (tech stack, deployment target, status). Neutral by
 /// default: a badge only takes an accent when the accent carries meaning.
 struct Badge: View {
     let text: String
@@ -111,12 +176,13 @@ struct Badge: View {
                 Image(systemName: systemImage)
                     .font(.system(size: 9.5, weight: .semibold))
             }
-            Text(text).font(Theme.ui(11, .semibold))
+            Text(text).font(Theme.ui(10.5, .medium))
         }
         .padding(.horizontal, 7)
-        .padding(.vertical, 3)
+        .frame(height: Theme.Height.badge)
         .foregroundStyle(tint)
-        .background(surface ?? tint.opacity(0.10), in: Capsule())
+        .background(surface ?? tint.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.badge, style: .continuous))
     }
 }
 
@@ -214,11 +280,22 @@ struct PrimaryButtonStyle: ButtonStyle {
                 .overlay {
                     shape.strokeBorder(border, lineWidth: 1)
                 }
+                .overlay(alignment: .top) {
+                    if prominent && isEnabled {
+                        shape
+                            .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+                            .mask(LinearGradient(colors: [.white, .clear],
+                                                  startPoint: .top,
+                                                  endPoint: .center))
+                    }
+                }
                 .focusRing(isFocused, cornerRadius: Theme.Radius.medium)
                 .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
                 .animation(Theme.Chrome.Timing.press, value: configuration.isPressed)
                 .animation(Theme.Chrome.Timing.hover, value: isHovering)
                 .onHover { isHovering = $0 }
+                .shadow(color: prominent && isEnabled ? Theme.Shadow.key : .clear,
+                        radius: prominent ? 6 : 0, y: prominent ? 2 : 0)
         }
 
         /// Disabled is neutral, never a pale accent: a washed-out indigo reads as
@@ -232,7 +309,7 @@ struct PrimaryButtonStyle: ButtonStyle {
 
         private var label: Color {
             guard isEnabled else { return Theme.disabledText }
-            return prominent ? Theme.textInverse : Theme.accent
+            return prominent ? Theme.textInverse : Theme.accentText
         }
 
         private var border: Color {
@@ -394,12 +471,19 @@ struct FieldChrome: ViewModifier {
             .font(Theme.ui(13))
             .foregroundStyle(isEnabled ? Theme.textPrimary : Theme.disabledText)
             .padding(.horizontal, Theme.Space.s + 2)
-            .frame(height: 28)
-            .background(isEnabled ? Theme.elevatedSurface : Theme.secondarySurface,
+            .frame(height: Theme.Height.input)
+            .background(isEnabled ? Theme.recessedSurface : Theme.secondarySurface,
                         in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
-                    .strokeBorder(isEnabled ? Theme.borderStandard : Theme.borderSubtle, lineWidth: 1)
+                    .strokeBorder(isEnabled ? Theme.borderSubtle : Theme.borderHairline, lineWidth: 1)
+            }
+            .overlay(alignment: .top) {
+                RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.34), lineWidth: 1)
+                    .mask(LinearGradient(colors: [.white, .clear],
+                                          startPoint: .top,
+                                          endPoint: .center))
             }
             .focusRing(focused, cornerRadius: Theme.Radius.small)
     }

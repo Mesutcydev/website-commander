@@ -16,24 +16,24 @@ final class TopBarLayoutTests: XCTestCase {
     // MARK: Dimensions
 
     func testBarDimensionsMatchTheSpecifiedScale() {
-        XCTAssertEqual(TopBarMetrics.height, 68)
-        XCTAssertEqual(TopBarMetrics.paddingX, 14)
-        XCTAssertEqual(TopBarMetrics.controlHeight, 34)
-        XCTAssertEqual(TopBarMetrics.smallControlSize, 32)
-        XCTAssertEqual(TopBarMetrics.groupGap, 8)
-        XCTAssertEqual(TopBarMetrics.zoneGap, 12)
+        XCTAssertEqual(TopBarMetrics.height, 58)
+        XCTAssertEqual(TopBarMetrics.paddingX, 20)
+        XCTAssertEqual(TopBarMetrics.controlHeight, 32)
+        XCTAssertEqual(TopBarMetrics.smallControlSize, 28)
+        XCTAssertEqual(TopBarMetrics.groupGap, 12)
+        XCTAssertEqual(TopBarMetrics.zoneGap, 14)
         XCTAssertEqual(TopBarMetrics.leftZoneGap, 10)
-        XCTAssertEqual(TopBarMetrics.brandHeight, 36)
-        XCTAssertEqual(TopBarMetrics.statusHeight, 30)
-        XCTAssertEqual(TopBarMetrics.navigationContainerHeight, 38)
+        XCTAssertEqual(TopBarMetrics.brandHeight, 32)
+        XCTAssertEqual(TopBarMetrics.statusHeight, 20)
+        XCTAssertEqual(TopBarMetrics.navigationContainerHeight, 32)
         XCTAssertEqual(TopBarMetrics.navigationItemHeight, 32)
-        XCTAssertEqual(TopBarMetrics.viewGroupHeight, 36)
+        XCTAssertEqual(TopBarMetrics.viewGroupHeight, 32)
     }
 
     func testRadiiFollowOneScale() {
-        XCTAssertEqual(TopBarMetrics.smallControlRadius, 8, "32pt icon controls")
-        XCTAssertEqual(TopBarMetrics.controlRadius, 10, "34pt controls")
-        XCTAssertEqual(TopBarMetrics.groupRadius, 12, "grouped containers")
+        XCTAssertEqual(TopBarMetrics.smallControlRadius, 7, "28pt icon controls")
+        XCTAssertEqual(TopBarMetrics.controlRadius, 8, "32pt controls")
+        XCTAssertEqual(TopBarMetrics.groupRadius, 8, "grouped containers")
         XCTAssertEqual(TopBarMetrics.popoverRadius, 14, "popovers")
     }
 
@@ -41,8 +41,8 @@ final class TopBarLayoutTests: XCTestCase {
     /// the narrowest tier.
     func testBarNeverExceedsTheDesktopCeiling() {
         for width in [800.0, 1024.0, 1200.0, 1280.0, 1440.0, 1600.0, 1728.0, 2560.0] as [CGFloat] {
-            XCTAssertEqual(TopBarMetrics(width: width).height, 68,
-                           "a \(Int(width))pt window keeps the full-height bar")
+            XCTAssertEqual(TopBarMetrics(width: width).height, 58,
+                           "a \(Int(width))pt window keeps the compact bar")
         }
         XCTAssertEqual(TopBarMetrics(width: 799).height, 58)
         XCTAssertEqual(TopBarMetrics(width: 760).height, 58)
@@ -152,8 +152,8 @@ final class TopBarLayoutTests: XCTestCase {
         let medium = TopBarMetrics(width: 1280)
         XCTAssertFalse(medium.primaryActionShowsLabel, "icon-only below ~1320")
         XCTAssertEqual(medium.primaryActionWidth, TopBarMetrics.controlHeight)
-        XCTAssertEqual(medium.primaryActionWidth, medium.height - 34,
-                       "the compact action stays square at the control height")
+        XCTAssertEqual(medium.primaryActionWidth, 32,
+                       "the compact action stays at the control height")
     }
 
     func testPrimaryActionBecomesIconOnlyAtTheDocumentedWidth() {
@@ -188,10 +188,11 @@ final class TopBarLayoutTests: XCTestCase {
     /// Route names are persisted, so they must not drift; only the bar's short
     /// labels differ from them.
     func testRouteNamesArePreservedAndOnlyBarLabelsShorten() {
-        XCTAssertEqual(Destination.allCases.map(\.rawValue),
+        XCTAssertEqual(Destination.primaryCases.map(\.rawValue),
                        ["Command Center", "Sites", "Agent", "Preview", "History"])
-        XCTAssertEqual(Destination.allCases.map(\.barLabel),
+        XCTAssertEqual(Destination.primaryCases.map(\.barLabel),
                        ["Command", "Sites", "Agent", "Preview", "History"])
+        XCTAssertEqual(Destination.allCases.last, .blog)
         XCTAssertEqual(Destination(rawValue: "Agent"), .agent)
     }
 

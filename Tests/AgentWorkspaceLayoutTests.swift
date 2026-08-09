@@ -56,8 +56,8 @@ final class AgentWorkspaceLayoutTests: XCTestCase {
 
     func testTaskCardHeightStaysInDenseRange() {
         let wide = AgentWorkspaceMetrics(width: 1600)
-        XCTAssertGreaterThanOrEqual(wide.taskCardMinHeight, 108)
-        XCTAssertLessThanOrEqual(wide.taskCardMinHeight, 124)
+        XCTAssertGreaterThanOrEqual(wide.taskCardMinHeight, 72)
+        XCTAssertLessThanOrEqual(wide.taskCardMinHeight, 80)
     }
 
     /// The grid must consume the pane rather than sitting in a narrow column:

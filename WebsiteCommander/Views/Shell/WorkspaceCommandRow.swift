@@ -52,15 +52,15 @@ struct WorkspaceSearchField: View {
             }
         }
         .padding(.horizontal, 9)
-        .frame(width: width, height: TopBarMetrics.controlHeight)
+        .frame(width: width, height: Theme.Height.input)
         .background {
             let shape = RoundedRectangle(cornerRadius: TopBarMetrics.controlRadius, style: .continuous)
             shape
-                .fill(Theme.Chrome.barControlFill)
+                .fill(Theme.recessedSurface)
                 .overlay {
-                    shape.strokeBorder(isFocused ? Theme.Chrome.accent.opacity(0.7)
-                                                 : Theme.Chrome.barControlBorder,
-                                       lineWidth: isFocused ? 2 : 1)
+                    shape.strokeBorder(isFocused ? Theme.Chrome.accent.opacity(0.44)
+                                                 : Theme.borderSubtle,
+                                       lineWidth: 1)
                 }
         }
         .animation(Theme.Chrome.Timing.hover, value: isFocused)
@@ -95,13 +95,13 @@ struct WorkspaceMenuControl<Content: View>: View {
                     .foregroundStyle(Theme.Chrome.textMuted)
             }
             .padding(.horizontal, 9)
-            .frame(height: TopBarMetrics.controlHeight)
+            .frame(height: Theme.Height.input)
             .background {
                 let shape = RoundedRectangle(cornerRadius: TopBarMetrics.controlRadius,
                                              style: .continuous)
                 shape
                     .fill(Theme.Chrome.barControlFill)
-                    .overlay { shape.strokeBorder(Theme.Chrome.barControlBorder, lineWidth: 1) }
+                    .overlay { shape.strokeBorder(Theme.borderSubtle, lineWidth: 1) }
             }
             .contentShape(RoundedRectangle(cornerRadius: TopBarMetrics.controlRadius,
                                            style: .continuous))
@@ -142,7 +142,7 @@ struct WorkspaceActionButton: View {
             .foregroundStyle(isProminent ? AnyShapeStyle(Color.white)
                                         : AnyShapeStyle(Theme.Chrome.textPrimary))
             .padding(.horizontal, 11)
-            .frame(height: TopBarMetrics.controlHeight)
+            .frame(height: Theme.Height.input)
         }
         .buttonStyle(TopBarControlButtonStyle(
             radius: TopBarMetrics.controlRadius,

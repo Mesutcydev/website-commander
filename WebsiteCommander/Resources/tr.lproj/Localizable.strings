@@ -95,6 +95,16 @@
 "Contact Form" = "İletişim Formu";
 "Add validation and result states" = "Doğrulama ve sonuç durumları ekleyin";
 "Describe a change, issue, or goal…" = "Bir değişiklik, sorun veya hedef açıklayın…";
+"Queue a follow-up…" = "Bir takip mesajını sıraya alın…";
+"Queue follow-up" = "Takip mesajını sıraya al";
+"Queued" = "Sırada";
+"Queued follow-ups are ready to run." = "Sıradaki takip mesajları çalıştırılmaya hazır.";
+"Queued follow-ups will start after the staged changes are reviewed." = "Sıradaki takip mesajları hazırlanan değişiklikler incelendikten sonra başlayacak.";
+"Follow-up prompts run in order after this turn." = "Takip mesajları bu turdan sonra sırayla çalışır.";
+"Continue the current run to process the queued follow-ups." = "Sıradaki takip mesajlarını işlemek için mevcut çalışmayı sürdürün.";
+"Run queued" = "Sırayı çalıştır";
+"Remove queued prompt" = "Sıradaki istemi kaldır";
+"Queue message" = "Mesajı sıraya al";
 "Attach files" = "Dosya ekle";
 "Attach images or text files" = "Görsel veya metin dosyaları ekle";
 "Send message" = "Mesaj gönder";

@@ -1,5 +1,26 @@
 import SwiftUI
 import AppKit
+import Combine
+
+/// Small, deterministic guards for values measured during SwiftUI layout.
+/// AppKit can report the same geometry more than once (and occasionally with
+/// sub-pixel noise); publishing every report turns a measurement into a state
+/// feedback loop.
+enum LayoutStability {
+    static let epsilon: CGFloat = 0.5
+
+    static func differs(_ lhs: CGFloat, _ rhs: CGFloat,
+                        epsilon: CGFloat = LayoutStability.epsilon) -> Bool {
+        guard lhs.isFinite, rhs.isFinite else { return false }
+        return abs(lhs - rhs) > epsilon
+    }
+
+    static func differs(_ lhs: CGSize, _ rhs: CGSize,
+                        epsilon: CGFloat = LayoutStability.epsilon) -> Bool {
+        differs(lhs.width, rhs.width, epsilon: epsilon)
+            || differs(lhs.height, rhs.height, epsilon: epsilon)
+    }
+}
 
 /// The Mac shell: one compact application bar over a full-width workspace.
 ///
@@ -7,7 +28,7 @@ import AppKit
 /// brand, the project, the five destinations, agent status, the model, the view
 /// controls, the primary action, and overflow, and the workspace beneath it owns
 /// the entire window width. The bar is the shell's top safe-area inset rather
-/// than an absolutely positioned layer, so the rows really are `[68, flexible]`
+/// than an absolutely positioned layer, so the rows really are `[56, flexible]`
 /// and the bar can still draw its popovers over the workspace.
 struct RootView: View {
 
@@ -31,6 +52,8 @@ struct RootView: View {
     @State private var showUpdateAlert = false
     @State private var showUpdateError = false
     @State private var showUpToDate = false
+    @State private var showVSCodeError = false
+    @State private var vscodeErrorMessage = ""
 
     private var current: Destination { destination ?? .commandCenter }
 
@@ -49,6 +72,7 @@ struct RootView: View {
             }
         }
         .environment(\.destination, $destination)
+        .background { GlassWindowConfigurator() }
         .onAppear {
             destination = Destination(rawValue: persistedDestination) ?? .commandCenter
         }
@@ -76,9 +100,32 @@ struct RootView: View {
                 engine.prefilledPrompt = prompt
                 destination = .agent
             })
+            .presentationBackground(.regularMaterial)
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestDebug)) { _ in
             showDebug = true
+        }
+        .onReceive(routedCommandNotifications) { notification in
+            switch notification.name {
+            case .requestOpenInVSCode:
+                openActiveSiteInVSCode()
+            case .requestRefreshPreview:
+                route(to: .preview, then: .refreshPreview)
+            case .requestAgentPreviewFromEngine:
+                route(to: .agent, then: .requestAgentPreview)
+            case .requestPreviewFromBridge:
+                destination = .preview
+            case .requestPreviewInspectFromBridge:
+                route(to: .preview, then: .requestPreviewInspectFromBridge)
+            case .requestAgentSendFromMenu:
+                route(to: .agent, then: .requestAgentSend)
+            case .requestAgentStopFromMenu:
+                route(to: .agent, then: .requestAgentStop)
+            case .requestApproveAllFromMenu:
+                route(to: .agent, then: .requestApproveAll)
+            default:
+                break
+            }
         }
         .sheet(isPresented: $showPalette) {
             CommandPaletteView(
@@ -95,12 +142,14 @@ struct RootView: View {
                     }
                 }
             )
+            .presentationBackground(.regularMaterial)
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestPalette)) { _ in
             showPalette = true
         }
         .sheet(isPresented: $showConversations) {
             ConversationsSheet()
+                .presentationBackground(.regularMaterial)
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestConversations)) { _ in
             showConversations = true
@@ -143,6 +192,11 @@ struct RootView: View {
         } message: {
             Text(updater.lastError ?? "")
         }
+        .alert("Couldn't open VS Code", isPresented: $showVSCodeError) {
+                Button("OK", role: .cancel) { showVSCodeError = false }
+            } message: {
+                Text(vscodeErrorMessage)
+            }
         .task(id: settings.hasCompletedOnboarding) {
             guard settings.hasCompletedOnboarding else { return }
             // One quiet check after launch — never polls, never errors loudly.
@@ -155,12 +209,60 @@ struct RootView: View {
         rel.sha256.count == 64 && rel.url.lowercased().hasSuffix(".zip")
     }
 
+    private var routedCommandNotifications: AnyPublisher<Notification, Never> {
+        let center = NotificationCenter.default
+        return center.publisher(for: .requestOpenInVSCode)
+            .merge(with: center.publisher(for: .requestRefreshPreview))
+            .merge(with: center.publisher(for: .requestAgentPreviewFromEngine))
+            .merge(with: center.publisher(for: .requestPreviewFromBridge))
+            .merge(with: center.publisher(for: .requestPreviewInspectFromBridge))
+            .merge(with: center.publisher(for: .requestAgentSendFromMenu))
+            .merge(with: center.publisher(for: .requestAgentStopFromMenu))
+            .merge(with: center.publisher(for: .requestApproveAllFromMenu))
+            .eraseToAnyPublisher()
+    }
+
+    private func route(to target: Destination, then notification: Notification.Name) {
+        destination = target
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            NotificationCenter.default.post(name: notification, object: nil)
+        }
+    }
+
+    private func openActiveSiteInVSCode() {
+        guard let workspace = settings.activeWorkspace else {
+            presentVSCodeError("Connect a website first, then try again.")
+            return
+        }
+        Task {
+            guard let token = await settings.resolvedGitHubToken(forAsync: workspace), !token.isEmpty else {
+                presentVSCodeError("Add a GitHub token in Settings → GitHub, then try again.")
+                return
+            }
+            do {
+                let path = try await LocalWorkspaceStore.ensureClone(workspace, token: token)
+                if !VSCodeBridge.open(folder: path) {
+                    presentVSCodeError("VS Code could not be opened. Install VS Code or enable its `code` command, then try again.")
+                }
+            } catch {
+                presentVSCodeError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func presentVSCodeError(_ message: String) {
+        vscodeErrorMessage = message
+        showVSCodeError = true
+    }
+
     // MARK: App shell
 
     private var appShell: some View {
-        workspace
+        ZStack {
+            GlassWorkspaceBackground()
+            workspace
+        }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-            .background(Theme.canvas)
             .safeAreaInset(edge: .top, spacing: 0) {
                 TopBar(
                     metrics: metrics,
@@ -190,10 +292,11 @@ struct RootView: View {
                         // Defer size→state writes so AppKit is not asked for
                         // another constraints pass while still inside one.
                         .onAppear {
-                            DispatchQueue.main.async { shellSize = proxy.size }
+                            let size = proxy.size
+                            DispatchQueue.main.async { publishShellSize(size) }
                         }
                         .onChange(of: proxy.size) { _, size in
-                            DispatchQueue.main.async { shellSize = size }
+                            DispatchQueue.main.async { publishShellSize(size) }
                         }
                 }
             }
@@ -207,6 +310,11 @@ struct RootView: View {
         Binding(get: { current }, set: { destination = $0 })
     }
 
+    private func publishShellSize(_ size: CGSize) {
+        guard LayoutStability.differs(shellSize, size) else { return }
+        shellSize = size
+    }
+
     /// The workspace fills everything under the bar. Each destination owns its
     /// own scroll region; the shell never scrolls.
     @ViewBuilder
@@ -217,6 +325,7 @@ struct RootView: View {
         case .agent:         AgentWorkspaceView()
         case .preview:       PreviewView(embedded: true)
         case .history:       HistoryView()
+        case .blog:          BlogView()
         }
     }
 }

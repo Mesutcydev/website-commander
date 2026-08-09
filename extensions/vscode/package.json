@@ -1,19 +1,22 @@
 {
   "name": "website-commander",
   "displayName": "Website Commander",
-  "description": "Drive the Website Commander macOS app from VS Code: send the editor/selection to the agent, or pull a debug brief for the current site.",
+  "description": "Drive the Website Commander macOS app from VS Code: send prompts, open preview, inspect, audit, or pull a debug brief.",
   "version": "0.1.0",
   "publisher": "mesut",
   "license": "MIT",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
-  "repository": { "type": "git", "url": "https://github.com/yourname/website-commander" },
+  "repository": { "type": "git", "url": "https://github.com/Mesutcydev/website-commander" },
   "main": "./out/extension.js",
-  "activationEvents": ["onCommand:websiteCommander.sendSelection", "onCommand:websiteCommander.debugSite", "onCommand:websiteCommander.listSites"],
+  "activationEvents": ["onCommand:websiteCommander.sendSelection", "onCommand:websiteCommander.debugSite", "onCommand:websiteCommander.openPreview", "onCommand:websiteCommander.inspectPreview", "onCommand:websiteCommander.auditPreview", "onCommand:websiteCommander.listSites"],
   "contributes": {
     "commands": [
       { "command": "websiteCommander.sendSelection", "title": "Website Commander: Send selection to agent" },
       { "command": "websiteCommander.debugSite", "title": "Website Commander: Debug current site" },
+      { "command": "websiteCommander.openPreview", "title": "Website Commander: Open preview" },
+      { "command": "websiteCommander.inspectPreview", "title": "Website Commander: Inspect preview" },
+      { "command": "websiteCommander.auditPreview", "title": "Website Commander: Audit preview" },
       { "command": "websiteCommander.listSites", "title": "Website Commander: List sites" }
     ],
     "configuration": {

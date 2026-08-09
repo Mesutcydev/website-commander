@@ -61,7 +61,7 @@ struct DeploymentSheet: View {
             footer
         }
         .frame(width: 500, height: 420)
-        .onAppear { hookURL = DeploymentService.hookURL(for: workspace.id) ?? "" }
+        .task { hookURL = await DeploymentService.hookURLAsync(for: workspace.id) ?? "" }
     }
 
     private var header: some View {

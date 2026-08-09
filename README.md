@@ -9,6 +9,12 @@ Website Commander is the open-source, Mac-native reimagining of the SiteAgent
 workflow. It is distributed directly from the developer's website (no App Store),
 runs entirely on your machine, and keeps your credentials in the macOS Keychain.
 
+**[Download Website Commander](https://mesutcydev.github.io/website-commander/)** ·
+**[View the latest GitHub release](https://github.com/Mesutcydev/website-commander/releases/latest)**
+
+The download page always points at the latest universal macOS build, the portable
+ZIP, the VS Code extension, and relative SHA-256 checksums.
+
 ---
 
 ## Highlights

@@ -32,11 +32,11 @@ enum SiteAuditor {
         var issues: [SiteAuditIssue] = []
         let lower = html.lowercased()
 
-        if !lower.contains("<title") {
+        if !hasTag("title", in: lower) {
             issues.append(.init(title: "Missing title",
                                 detail: "The page has no <title> tag.", severity: .critical))
         }
-        if !lower.contains("name=\"description\"") && !lower.contains("name='description'") {
+        if !hasMetaName("description", in: lower) {
             issues.append(.init(title: "Missing meta description",
                                 detail: "Search previews may use weak fallback copy.", severity: .warning))
         }
@@ -53,10 +53,17 @@ enum SiteAuditor {
             issues.append(.init(title: "Slow load",
                                 detail: "Load time is \(load)ms (above 3s) in the preview.", severity: .warning))
         }
-        let failed = inspector.networkRequests.filter { ($0.status ?? 0) >= 400 }
+        // Resource Timing records intentionally have no HTTP status. They are
+        // useful for performance, but must not be reported as failed requests.
+        // A concrete 0, however, is the fetch/XHR failure sentinel and should
+        // remain visible as a failed request.
+        let failed = inspector.networkRequests.filter {
+            guard let status = $0.status else { return false }
+            return status == 0 || status >= 400
+        }
         if !failed.isEmpty {
             issues.append(.init(title: "Failed network requests",
-                                detail: "\(failed.count) request(s) returned 4xx/5xx.", severity: .critical))
+                                detail: "\(failed.count) request(s) failed or returned 4xx/5xx.", severity: .critical))
         }
         if inspector.errorCount > 0 {
             issues.append(.init(title: "Console errors",
@@ -74,6 +81,18 @@ enum SiteAuditor {
         let pattern = "<img\\b(?![^>]*\\balt\\s*=)[^>]*>"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return 0 }
         return regex.numberOfMatches(in: lowerHTML, range: NSRange(lowerHTML.startIndex..., in: lowerHTML))
+    }
+
+    private static func hasTag(_ tag: String, in lowerHTML: String) -> Bool {
+        guard let regex = try? NSRegularExpression(pattern: "<\(tag)\\b", options: []) else { return false }
+        return regex.firstMatch(in: lowerHTML, range: NSRange(lowerHTML.startIndex..., in: lowerHTML)) != nil
+    }
+
+    private static func hasMetaName(_ name: String, in lowerHTML: String) -> Bool {
+        let escapedName = NSRegularExpression.escapedPattern(for: name)
+        let pattern = #"<meta\b[^>]*\bname\s*=\s*["']\#(escapedName)["']"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return false }
+        return regex.firstMatch(in: lowerHTML, range: NSRange(lowerHTML.startIndex..., in: lowerHTML)) != nil
     }
 
     /// Build an agent prompt that asks it to fix the given audit issues.

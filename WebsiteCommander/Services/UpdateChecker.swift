@@ -29,7 +29,7 @@ final class UpdateChecker: ObservableObject {
     }
 
     /// Baked-in production feed. Empty Settings override → this URL.
-    static let defaultFeedURL = "https://mesut.uk/wc-update.json"
+    nonisolated static let defaultFeedURL = "https://mesut.uk/wc-update.json"
 
     @Published var checking = false
     @Published var installing = false

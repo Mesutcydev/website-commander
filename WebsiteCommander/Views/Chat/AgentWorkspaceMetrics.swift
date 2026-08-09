@@ -72,7 +72,9 @@ struct AgentWorkspaceMetrics: Equatable {
         return 1
     }
 
-    var taskCardMinHeight: CGFloat { isNarrow ? 100 : 112 }
+    /// Suggested improvements are actions, not feature cards. Keep them in a
+    /// compact 72–80pt row so the composer and preview retain the canvas.
+    var taskCardMinHeight: CGFloat { isNarrow ? 76 : 80 }
 
     // MARK: Command Center rows
 
@@ -89,9 +91,9 @@ struct AgentWorkspaceMetrics: Equatable {
         return 1
     }
 
-    /// Five quick actions. The row stays whole down to the window's minimum
-    /// width: at 760pt the longest title wraps to two lines, which still reads
-    /// better than breaking five cards into a 3 + 2 block with a hole in it.
+    /// Legacy grid contract retained for layout tests and narrow integrations.
+    /// The Command Center now renders these actions as a horizontal strip, but
+    /// consumers that still need a fallback grid can use the same breakpoints.
     var quickActionColumns: Int {
         if width >= 760 { return 5 }
         if width >= 560 { return 3 }

@@ -50,52 +50,51 @@ struct TopBarMetrics: Equatable {
 
     // MARK: Fixed chrome tokens
 
-    /// Bar height on desktop. Never taller than this.
-    static let height: CGFloat = 68
-    /// The one reduction allowed, below 800pt.
+    /// The global application toolbar height. It does not grow by density.
+    static let height: CGFloat = 58
     static let minimalHeight: CGFloat = 58
-    static let paddingX: CGFloat = 14
+    static let paddingX: CGFloat = 20
     /// Gap between controls inside a zone.
-    static let groupGap: CGFloat = 8
+    static let groupGap: CGFloat = 12
     /// Gap between the three zones.
-    static let zoneGap: CGFloat = 12
+    static let zoneGap: CGFloat = 14
     /// The left zone is slightly looser: brand lockups need air.
     static let leftZoneGap: CGFloat = 10
 
-    static let controlHeight: CGFloat = 34
-    static let smallControlSize: CGFloat = 32
-    static let brandHeight: CGFloat = 36
-    static let statusHeight: CGFloat = 30
-    static let navigationContainerHeight: CGFloat = 38
+    static let controlHeight: CGFloat = 32
+    static let smallControlSize: CGFloat = 28
+    static let brandHeight: CGFloat = 32
+    static let statusHeight: CGFloat = 20
+    static let navigationContainerHeight: CGFloat = 32
     static let navigationItemHeight: CGFloat = 32
-    static let viewGroupHeight: CGFloat = 36
+    static let viewGroupHeight: CGFloat = 32
 
-    static let controlRadius: CGFloat = 10
-    static let smallControlRadius: CGFloat = 8
-    static let groupRadius: CGFloat = 12
-    static let viewGroupRadius: CGFloat = 11
+    static let controlRadius: CGFloat = 8
+    static let smallControlRadius: CGFloat = 7
+    static let groupRadius: CGFloat = 8
+    static let viewGroupRadius: CGFloat = 8
     static let popoverRadius: CGFloat = 14
-    static let popoverRowRadius: CGFloat = 9
+    static let popoverRowRadius: CGFloat = 8
 
-    static let dividerHeight: CGFloat = 18
+    static let dividerHeight: CGFloat = 16
     static let dividerMargin: CGFloat = 2
     /// A hairline divider's total horizontal footprint: 1pt rule plus its
     /// breathing room on each side.
     static let dividerWidth: CGFloat = 1 + dividerMargin * 2
 
     /// Gap between the brand mark and the wordmark beside it.
-    static let brandGap: CGFloat = 9
+    static let brandGap: CGFloat = 8
     /// Horizontal padding inside the status control.
-    static let statusPaddingX: CGFloat = 10
+    static let statusPaddingX: CGFloat = 8
 
     /// The view-control group: one 32pt segment per view, plus container inset.
     static let viewControlGroupWidth: CGFloat = smallControlSize * 2 + 6
 
     static let iconSize: CGFloat = 16
-    static let navigationIconSize: CGFloat = 15
+    static let navigationIconSize: CGFloat = 13
     static let chevronSize: CGFloat = 12
-    static let projectIconSize: CGFloat = 18
-    static let brandMarkSize: CGFloat = 28
+    static let projectIconSize: CGFloat = 16
+    static let brandMarkSize: CGFloat = 24
     static let statusDotSize: CGFloat = 6
 
     /// Leading room reserved for the window's traffic lights, which sit inside
@@ -223,7 +222,7 @@ struct TopBarMetrics: Equatable {
     /// New and Stop are the same control, so its footprint is fixed rather than
     /// derived from whichever word is currently in it. Nothing beside it can
     /// move when the agent starts or stops.
-    static let primaryActionLabelledWidth: CGFloat = 78
+    static let primaryActionLabelledWidth: CGFloat = 82
 
     var primaryActionWidth: CGFloat {
         primaryActionShowsLabel ? Self.primaryActionLabelledWidth : Self.controlHeight
@@ -243,7 +242,7 @@ struct TopBarMetrics: Equatable {
 
     static let navigationItemPaddingX: CGFloat = 10
     static let navigationItemGap: CGFloat = 2
-    static let navigationContainerPadding: CGFloat = 3
+    static let navigationContainerPadding: CGFloat = 0
 
     /// One destination cell's fixed width, measured at the *selected* weight —
     /// the widest the label can be. Cells are sized rather than padded so
@@ -254,12 +253,12 @@ struct TopBarMetrics: Equatable {
             + navigationItemPaddingX * 2
     }
 
-    /// The five-item destination row at its true rendered width.
+    /// The five-item primary destination row at its true rendered width.
     static var destinationRowWidth: CGFloat {
-        let items = Destination.allCases.reduce(CGFloat.zero) { total, item in
+        let items = Destination.primaryCases.reduce(CGFloat.zero) { total, item in
             total + navigationItemWidth(for: item)
         }
-        let gaps = CGFloat(max(0, Destination.allCases.count - 1)) * navigationItemGap
+        let gaps = CGFloat(max(0, Destination.primaryCases.count - 1)) * navigationItemGap
         return items + gaps + navigationContainerPadding * 2
     }
 

@@ -34,7 +34,8 @@ struct ChatView: View {
     var onScrolledUnder: ((Bool) -> Void)?
     @EnvironmentObject var engine: AgentEngine
     @EnvironmentObject var settings: SettingsStore
-    @SceneStorage("agent.composerDraft") private var draft = ""
+    @State private var draft = ""
+    @State private var draftWorkspaceID: UUID?
     @State private var reviewingChange: PendingChange?
     @State private var showConversations = false
     @State private var attachments: [Attachment] = []
@@ -62,6 +63,7 @@ struct ChatView: View {
         }
         .animation(Motion.smooth, value: engine.pendingChanges.isEmpty)
         .onAppear {
+            restoreDraft()
             if let prompt = engine.prefilledPrompt {
                 draft = prompt
                 engine.prefilledPrompt = nil
@@ -80,6 +82,13 @@ struct ChatView: View {
         .onChange(of: composerFocused) { _, focused in
             if !focused { composerFocusChrome = false }
         }
+        .onChange(of: draft) { _, newValue in
+            guard draftWorkspaceID == currentDraftWorkspaceID else { return }
+            UserDefaults.standard.set(newValue, forKey: draftStorageKey(for: draftWorkspaceID))
+        }
+        .onChange(of: settings.activeWorkspaceID) { _, _ in
+            restoreDraft()
+        }
         .onChange(of: engine.prefilledPrompt) { _, newValue in
             if let newValue { draft = newValue; engine.prefilledPrompt = nil }
         }
@@ -96,7 +105,16 @@ struct ChatView: View {
             onCompletion: importAttachments
         )
         .onChange(of: engine.pendingChanges.count) { oldCount, newCount in
-            guard oldCount == 0, newCount > 0, reviewingChange == nil,
+            // Auto-commit owns the approval transition. A staged change can be
+            // visible for a moment while the model finishes its turn; opening
+            // a review sheet here would leave a stale sheet behind after the
+            // automatic commit and a second click would look like a conflict.
+            if newCount == 0 {
+                reviewingChange = nil
+                return
+            }
+            guard !settings.autoCommit,
+                  oldCount == 0, newCount > 0, reviewingChange == nil,
                   let first = engine.pendingChanges.first else { return }
             DispatchQueue.main.async { reviewingChange = first }
         }
@@ -168,6 +186,9 @@ struct ChatView: View {
             if let note = engine.lastCommitNote {
                 commitBanner(note)
             }
+            if let warning = engine.lastDeploymentWarning {
+                deploymentWarningBanner(warning)
+            }
             Rectangle()
                 .fill(Theme.divider)
                 .frame(height: 1)
@@ -189,8 +210,11 @@ struct ChatView: View {
             if engine.canContinue {
                 Button("Continue") { engine.continueRun() }
                     .buttonStyle(.primarySoftCompact)
-            } else {
+            } else if engine.lastApprovalError == nil {
                 Button("Retry") { retryLastPrompt() }
+                    .buttonStyle(.primarySoftCompact)
+            } else if let change = engine.pendingChanges.first {
+                Button("Review change") { reviewingChange = change }
                     .buttonStyle(.primarySoftCompact)
             }
             Button {
@@ -222,6 +246,7 @@ struct ChatView: View {
             }
             Button {
                 engine.lastCommitNote = nil
+                engine.lastDeploymentWarning = nil
             } label: {
                 Label("Dismiss deployment status", systemImage: "xmark")
             }
@@ -231,6 +256,33 @@ struct ChatView: View {
         .padding(.horizontal, Theme.Space.m)
         .padding(.vertical, Theme.Space.s)
         .background(Theme.greenSoft)
+    }
+
+    private func deploymentWarningBanner(_ warning: String) -> some View {
+        HStack(spacing: Theme.Space.s) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Change committed, but deployment needs attention")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(warning)
+                    .font(.caption2)
+                    .foregroundStyle(Theme.secondaryText)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Button {
+                engine.lastDeploymentWarning = nil
+            } label: {
+                Label("Dismiss deployment warning", systemImage: "xmark")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, Theme.Space.m)
+        .padding(.vertical, Theme.Space.s)
+        .background(Theme.amberSoft)
     }
 
     // MARK: Transcript
@@ -262,7 +314,11 @@ struct ChatView: View {
                         LiveToolActivity(events: engine.liveToolEvents)
                             .id("live-tools")
                     }
-                    ForEach(engine.transcript) { message in
+                    // Queued prompts render after the live assistant bubble,
+                    // even though they were submitted while that bubble was
+                    // still streaming. This keeps the visual conversation
+                    // order truthful without mutating the active context.
+                    ForEach(engine.transcript.filter { !$0.isQueued }) { message in
                         MessageBubble(message: message, metrics: metrics)
                             .id(message.id)
                     }
@@ -282,6 +338,10 @@ struct ChatView: View {
                     } else if engine.state.isActive {
                         TypingIndicator()
                             .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    }
+                    ForEach(engine.transcript.filter(\.isQueued)) { message in
+                        MessageBubble(message: message, metrics: metrics)
+                            .id(message.id)
                     }
                     Color.clear.frame(height: 1).id("chat-bottom")
                         .background {
@@ -329,12 +389,21 @@ struct ChatView: View {
                 // `_postWindowNeedsUpdateConstraints` and crashes the app mid
                 // stream — which relaunches into an empty Agent idle surface.
                 DispatchQueue.main.async {
-                    isNearTranscriptBottom = bottom <= transcriptViewportHeight + 96 || bottom.isZero
-                    if isNearTranscriptBottom { hasUnseenActivity = false }
+                    guard bottom.isFinite else { return }
+                    let nearBottom = bottom <= transcriptViewportHeight + 96 || bottom.isZero
+                    guard nearBottom != isNearTranscriptBottom || (nearBottom && hasUnseenActivity) else {
+                        return
+                    }
+                    isNearTranscriptBottom = nearBottom
+                    if nearBottom { hasUnseenActivity = false }
                 }
             }
             .onPreferenceChange(TranscriptViewportKey.self) { height in
-                DispatchQueue.main.async { transcriptViewportHeight = height }
+                DispatchQueue.main.async {
+                    guard height.isFinite,
+                          LayoutStability.differs(transcriptViewportHeight, height) else { return }
+                    transcriptViewportHeight = height
+                }
             }
             .onPreferenceChange(HeadingBottomKey.self) { top in
                 DispatchQueue.main.async { onScrolledUnder?(top < -2) }
@@ -701,6 +770,7 @@ struct ChatView: View {
 
     private func composer(metrics: AgentWorkspaceMetrics) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
+            promptHeader
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Theme.Space.s) {
@@ -716,15 +786,19 @@ struct ChatView: View {
                     .font(.callout)
                     .foregroundStyle(Theme.danger)
             }
+            if engine.queuedPromptCount > 0 {
+                queuedPromptNotice
+            }
 
-            HStack(alignment: .bottom, spacing: Theme.Space.m) {
+            HStack(alignment: .bottom, spacing: Theme.Space.s) {
                 HStack(alignment: .bottom, spacing: Theme.Space.s) {
                     ComposerAttachmentButton {
                         showAttachmentPicker = true
                     }
-                    .disabled(engine.state.isActive || attachments.count >= Attachment.maximumCount)
+                    .disabled((engine.isRunActive && !engine.canQueuePrompt)
+                              || attachments.count >= Attachment.maximumCount)
 
-                    TextField("Describe a change, issue, or goal…", text: $draft, axis: .vertical)
+                    TextField(composerPlaceholder, text: $draft, axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(Theme.ui(13.5))
                         .foregroundStyle(Theme.textPrimary)
@@ -737,8 +811,8 @@ struct ChatView: View {
                         }
                 }
                 .padding(.horizontal, Theme.Space.m + 2)
-                .padding(.vertical, 9)
-                .frame(minHeight: 54)
+                .padding(.vertical, 7)
+                .frame(minHeight: 40)
                 .background(Theme.elevatedSurface,
                             in: RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous))
                 .activityBorder(active: engine.state.isActive, focused: composerShowsFocus)
@@ -759,6 +833,17 @@ struct ChatView: View {
                     .labelStyle(.iconOnly)
                     .buttonStyle(ComposerActionStyle(kind: .stop))
                     .help("Stop agent (⌘.)")
+                    if canSend {
+                        Button {
+                            sendIfPossible()
+                        } label: {
+                            Label("Queue message", systemImage: "arrow.up")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(ComposerActionStyle(kind: .send))
+                        .help("Queue follow-up message (⌘↩)")
+                    }
                 } else {
                     Button {
                         sendIfPossible()
@@ -776,13 +861,83 @@ struct ChatView: View {
             composerFooter
         }
         .padding(.horizontal, metrics.paddingX)
-        .padding(.vertical, 14)
+        .padding(.vertical, 10)
         .workspaceColumn(metrics)
     }
 
     private var canSend: Bool {
-        (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
-            && !engine.isRunActive
+        let hasContent = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !attachments.isEmpty
+        return hasContent && (!engine.isRunActive || engine.canQueuePrompt)
+    }
+
+    private var composerPlaceholder: String {
+        engine.isRunActive
+            ? String(localized: "Queue a follow-up…")
+            : String(localized: "Describe a change, issue, or goal…")
+    }
+
+    private var promptHeader: some View {
+        HStack(spacing: Theme.Space.s) {
+            Label(engine.isRunActive ? "Queue follow-up" : "Agent prompt",
+                  systemImage: engine.isRunActive ? "clock.arrow.circlepath" : "sparkles")
+                .font(Theme.ui(10.5, .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Spacer()
+            if engine.queuedPromptCount > 0 {
+                Text("(engine.queuedPromptCount) queued")
+                    .font(Theme.ui(10.5, .medium))
+                    .foregroundStyle(Theme.violet)
+            }
+            Label(settings.autoCommit ? "Auto-commit on" : "Review before commit",
+                  systemImage: settings.autoCommit ? "bolt.fill" : "checkmark.shield.fill")
+                .font(Theme.ui(10.5, .medium))
+                .foregroundStyle(settings.autoCommit ? Theme.warning : Theme.success)
+            Text("⌘↩")
+                .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                .foregroundStyle(Theme.tertiaryText)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Theme.secondarySurface, in: Capsule())
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var queuedPromptNotice: some View {
+        HStack(spacing: Theme.Space.s) {
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundStyle(Theme.violet)
+            Text(queuedPromptNoticeText)
+                .font(.caption)
+                .foregroundStyle(Theme.secondaryText)
+                .lineLimit(2)
+            Spacer(minLength: Theme.Space.s)
+            if !engine.isRunActive && !engine.canContinue
+                && engine.pendingChanges.isEmpty {
+                Button("Run queued") {
+                    engine.resumeQueuedPrompts()
+                }
+                .buttonStyle(.primarySoftCompact)
+            }
+        }
+        .padding(.horizontal, Theme.Space.s)
+        .padding(.vertical, 7)
+        .background(Theme.violetSoft, in: RoundedRectangle(cornerRadius: Theme.Radius.small,
+                                                            style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var queuedPromptNoticeText: String {
+        if engine.isRunActive {
+            return String(localized: "Follow-up prompts run in order after this turn.")
+        }
+        if engine.canContinue {
+            return String(localized: "Continue the current run to process the queued follow-ups.")
+        }
+        if !engine.pendingChanges.isEmpty {
+            return String(localized: "Queued follow-ups will start after the staged changes are reviewed.")
+        }
+        return String(localized: "Queued follow-ups are ready to run.")
     }
 
     private var composerFooter: some View {
@@ -813,10 +968,25 @@ struct ChatView: View {
             ? "Review the attached file\(attachments.count == 1 ? "" : "s")."
             : draft
         let outgoingAttachments = attachments
+        guard engine.send(text, attachments: outgoingAttachments) else { return }
+        UserDefaults.standard.removeObject(forKey: draftStorageKey(for: draftWorkspaceID))
         draft = ""
         attachments = []
         attachmentError = nil
-        engine.send(text, attachments: outgoingAttachments)
+    }
+
+    private var currentDraftWorkspaceID: UUID? {
+        settings.activeWorkspace?.id
+    }
+
+    private func draftStorageKey(for workspaceID: UUID?) -> String {
+        "agent.composerDraft.\(workspaceID?.uuidString ?? "unassigned")"
+    }
+
+    private func restoreDraft() {
+        let workspaceID = currentDraftWorkspaceID
+        draftWorkspaceID = workspaceID
+        draft = UserDefaults.standard.string(forKey: draftStorageKey(for: workspaceID)) ?? ""
     }
 
     private func attachmentChip(_ attachment: Attachment) -> some View {
@@ -887,13 +1057,7 @@ struct ChatView: View {
     }
 
     private func retryLastPrompt() {
-        guard let text = engine.transcript.last(where: { $0.role == .user })?.text else {
-            engine.lastError = nil
-            return
-        }
-        engine.lastError = nil
-        draft = text
-        sendIfPossible()
+        engine.retryFailedRun()
     }
 }
 
@@ -1043,26 +1207,27 @@ struct SmartTaskCard: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .top, spacing: Theme.Space.s) {
-                    iconTile
-                    Spacer(minLength: 0)
-                    if recommended { RecommendedBadge() }
+            HStack(spacing: Theme.Space.s) {
+                iconTile
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(LocalizedStringKey(template.title))
+                        .font(Theme.ui(13, .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(LocalizedStringKey(template.subtitle))
+                        .font(Theme.ui(11.5))
+                        .foregroundStyle(Theme.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-                Text(LocalizedStringKey(template.title))
-                    .font(Theme.ui(13, .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                Text(LocalizedStringKey(template.subtitle))
-                    .font(Theme.ui(12))
-                    .foregroundStyle(Theme.secondaryText)
-                    .lineSpacing(2)
-                    .lineLimit(metrics.isNarrow ? 2 : 3)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
+                Spacer(minLength: Theme.Space.xs)
+                if recommended { RecommendedBadge() }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.tertiaryText)
             }
-            .padding(Theme.Space.m)
+            .padding(.horizontal, Theme.Space.m)
+            .padding(.vertical, Theme.Space.s)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(minHeight: metrics.taskCardMinHeight, alignment: .topLeading)
         }
@@ -1103,8 +1268,8 @@ private struct RecommendedBadge: View {
     }
 }
 
-/// The card's surface: neutral fill, hairline, and two very soft shadows that
-/// only get clearer on hover. Motion is a 1.5pt lift, not a scale.
+/// The row's surface: tonal separation at rest, a quiet hover state, and a
+/// restrained focus indicator. Suggestions are not elevated cards.
 private struct SmartTaskCardStyle: ButtonStyle {
     let isHovering: Bool
 
@@ -1126,28 +1291,18 @@ private struct SmartTaskCardStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .background(configuration.isPressed ? Theme.secondarySurface : Theme.elevatedSurface,
+                .background(configuration.isPressed
+                            ? AnyShapeStyle(Theme.surfacePressed)
+                            : AnyShapeStyle(isHovering ? Theme.surfaceHover : Theme.standardSurface),
                             in: shape)
-                .overlay {
-                    shape.strokeBorder(isHovering ? Theme.borderStandard : Theme.borderSubtle,
-                                       lineWidth: 1)
-                }
-                .cardElevation(raised: isHovering && !configuration.isPressed)
                 .overlay {
                     shape.inset(by: -3)
                         .strokeBorder(Theme.focusRing.opacity(isFocused ? 0.9 : 0), lineWidth: 2)
                 }
-                .offset(y: liftedOffset)
                 .contentShape(shape)
                 .opacity(isEnabled ? 1 : 0.5)
                 .animation(reduceMotion ? nil : Theme.Chrome.Timing.press,
                            value: configuration.isPressed)
-        }
-
-        private var liftedOffset: CGFloat {
-            guard !reduceMotion else { return 0 }
-            if configuration.isPressed { return 0 }
-            return isHovering ? -1.5 : 0
         }
     }
 }
@@ -1235,8 +1390,8 @@ struct LiveToolActivity: View {
             }
         }
         .padding(Theme.Space.m)
-        .background(Theme.elevatedSurface,
-                    in: RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
+                .background(Theme.standardPanelGradient,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: Theme.Radius.medium, style: .continuous)
                 .strokeBorder(Theme.borderSubtle)
@@ -1445,8 +1600,10 @@ struct MessageBubble: View {
     var metrics: AgentWorkspaceMetrics?
 
     @EnvironmentObject var settings: SettingsStore
+    @EnvironmentObject var engine: AgentEngine
 
     private var isUser: Bool { message.role == .user }
+    private var isQueued: Bool { message.isQueued }
 
     private var assistantProviderID: String {
         settings.preferOnDevice ? "ondevice" : settings.providerID
@@ -1476,6 +1633,22 @@ struct MessageBubble: View {
 
     private var content: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: Theme.Space.s) {
+            if isQueued {
+                HStack(spacing: 5) {
+                    Image(systemName: "clock")
+                    Text("Queued")
+                    Button {
+                        engine.removeQueuedPrompt(message.id)
+                    } label: {
+                        Label("Remove queued prompt", systemImage: "xmark")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove queued prompt")
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Theme.violet)
+            }
             if !message.toolEvents.isEmpty {
                 toolEvents
             }
@@ -1503,13 +1676,16 @@ struct MessageBubble: View {
                 .frame(maxWidth: isUser ? nil : proseMaxWidth,
                        alignment: .leading)
                 .background(background, in: bubbleShape)
-                .foregroundStyle(isUser ? .white : .primary)
+                .foregroundStyle(isUser ? Theme.textInverse : Theme.textPrimary)
             }
         }
     }
 
     private var background: AnyShapeStyle {
-        isUser ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.cardFill)
+        if isUser {
+            return AnyShapeStyle(isQueued ? Theme.accent.opacity(0.58) : Theme.accent)
+        }
+        return AnyShapeStyle(Theme.cardFill)
     }
 
     private var bubbleShape: RoundedRectangle {
@@ -1551,30 +1727,17 @@ struct MessageBubble: View {
 // MARK: - Typing indicator
 
 struct TypingIndicator: View {
-    @EnvironmentObject var settings: SettingsStore
-    @State private var phase = 0.0
-
-    private var providerID: String {
-        settings.preferOnDevice ? "ondevice" : settings.providerID
-    }
-
     var body: some View {
-        HStack(spacing: 6) {
-            ProviderAvatar(size: 28, providerID: providerID, active: true, state: .thinking)
-            HStack(spacing: 4) {
-                ForEach(0..<3) { i in
-                    Circle().fill(Theme.tertiaryText)
-                        .frame(width: 6, height: 6)
-                        .opacity(0.4 + 0.6 * abs(sin(phase + Double(i) * 0.6)))
-                }
-            }
-            .padding(.horizontal, Theme.Space.m).padding(.vertical, Theme.Space.s + 2)
-            .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
+        HStack(spacing: Theme.Space.s) {
+            AgentActivityGlyph(state: .thinking, size: 20)
+            Text("Agent is thinking…")
+                .font(Theme.ui(12.5, .medium))
+                .foregroundStyle(Theme.secondaryText)
         }
+        .padding(.horizontal, Theme.Space.m)
+        .padding(.vertical, Theme.Space.s)
+        .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))
         .wcAppear()
-        .onAppear {
-            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) { phase = .pi }
-        }
     }
 }
 
@@ -1625,12 +1788,22 @@ struct PendingChangesBar: View {
     }
 
     private var changeSummary: some View {
-        let added = engine.pendingChanges.reduce(0) { $0 + $1.addedLines }
-        let removed = engine.pendingChanges.reduce(0) { $0 + $1.removedLines }
+        let textChanges = engine.pendingChanges.filter { !$0.isBinary }
+        let added = textChanges.reduce(0) { $0 + $1.addedLines }
+        let removed = textChanges.reduce(0) { $0 + $1.removedLines }
+        let binaryChanges = engine.pendingChanges.compactMap { $0.binaryContent }
+        let binaryBytes = binaryChanges.reduce(Int64(0)) { $0 + $1.byteCount }
         let risks = engine.pendingChanges.reduce(0) { $0 + $1.risks.count }
         return HStack(spacing: 4) {
-            Text("+\(added)").foregroundStyle(Theme.success)
-            Text("−\(removed)").foregroundStyle(Theme.danger)
+            if !textChanges.isEmpty {
+                Text("+\(added)").foregroundStyle(Theme.success)
+                Text("−\(removed)").foregroundStyle(Theme.danger)
+            }
+            if !binaryChanges.isEmpty {
+                Label("\(binaryChanges.count) asset\(binaryChanges.count == 1 ? "" : "s") · \(ByteCountFormatter.string(fromByteCount: binaryBytes, countStyle: .file))",
+                      systemImage: "photo")
+                    .foregroundStyle(Theme.teal)
+            }
             if risks > 0 {
                 Label("\(risks)", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(Theme.warning)
@@ -1640,6 +1813,6 @@ struct PendingChangesBar: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(Theme.elevatedSurface.opacity(0.75), in: Capsule())
-        .accessibilityLabel("\(added) lines added, \(removed) removed, \(risks) risk findings")
+        .accessibilityLabel("\(added) lines added, \(removed) removed, \(binaryChanges.count) binary assets, \(risks) risk findings")
     }
 }

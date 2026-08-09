@@ -8,8 +8,12 @@ struct LivingTabMark: View {
     var size: CGFloat = 24
     var style: Style = .gradient
     var animated = false
+    /// The toolbar uses this separate, very small signal. The mark itself
+    /// never rotates or scales continuously.
+    var ambientSignal = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @EnvironmentObject private var motion: AmbientMotionCoordinator
     @State private var revealed = false
 
     var body: some View {
@@ -23,6 +27,16 @@ struct LivingTabMark: View {
                 .offset(x: size * 0.20, y: -size * 0.16)
                 .scaleEffect(revealed || !animated || reduceMotion ? 1 : 0.35)
                 .opacity(revealed || !animated || reduceMotion ? 1 : 0)
+
+            if ambientSignal, !reduceMotion, motion.isRunning,
+               let travel = motion.traversal(period: 6.0, activeDuration: 0.9) {
+                Circle()
+                    .fill(Theme.accentDeep)
+                    .frame(width: 2.5, height: 2.5)
+                    .opacity(travel.opacity)
+                    .offset(x: size * (0.22 + 0.48 * travel.progress) - size / 2,
+                            y: size * 0.20 - size / 2)
+            }
         }
         .frame(width: size, height: size)
         .onAppear {

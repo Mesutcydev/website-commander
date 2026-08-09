@@ -34,6 +34,7 @@ final class LocalBridge: ObservableObject {
 
     weak var settings: SettingsStore?
     weak var engine: AgentEngine?
+    weak var browser: BrowserController?
 
     private static var supportDir: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -180,20 +181,41 @@ final class LocalBridge: ObservableObject {
                                        "committed": result.committed, "staged": result.staged]
             if let e = result.error { dict["error"] = e }
             return dict
+        case "preview":
+            if let error = activateRequestedWorkspace(req, settings: settings) {
+                return ["ok": false, "error": error]
+            }
+            NotificationCenter.default.post(name: .requestPreviewFromBridge, object: nil)
+            return ["ok": true]
+        case "inspect":
+            if let error = activateRequestedWorkspace(req, settings: settings) {
+                return ["ok": false, "error": error]
+            }
+            NotificationCenter.default.post(name: .requestPreviewInspectFromBridge, object: nil)
+            return ["ok": true]
+        case "audit":
+            if let error = activateRequestedWorkspace(req, settings: settings) {
+                return ["ok": false, "error": error]
+            }
+            let brief = await makeDebugBrief(settings: settings, engine: engine)
+            return [
+                "ok": true,
+                "healthScore": brief.healthScore,
+                "liveURL": brief.context.liveURL,
+                "audit": brief.audit.map {
+                    ["severity": $0.severity, "title": $0.title, "detail": $0.detail]
+                },
+                "consoleErrors": brief.consoleErrors,
+                "failedRequests": brief.failedRequests.map {
+                    ["method": $0.method, "url": $0.url, "status": $0.status]
+                }
+            ]
         case "debug":
-            let ws = settings.activeWorkspace
-            let repoPath = ws.flatMap { LocalWorkspaceStore.isCloned($0) ? LocalWorkspaceStore.localPath(for: $0).path : nil }
-            let brief = DebugBrief(
-                generatedAt: Date(), appVersion: "bridge",
-                context: .init(siteName: ws?.name ?? "—", slug: ws?.slug ?? "—",
-                               branch: ws?.gitBranch ?? "—", liveURL: ws?.configuredLiveURL ?? "",
-                               repoPath: repoPath, techStack: ws?.techStack.rawValue ?? "—",
-                               deployment: ws?.deployment.rawValue ?? "—"),
-                consoleErrors: [], consoleWarnings: [], failedRequests: [],
-                loadMs: nil, domReadyMs: nil, transferKB: nil,
-                audit: [], injection: [], lastAgentError: engine.lastError,
-                stagedChanges: engine.pendingChanges.count)
-            let file = EditorBridge.writeBrief(brief, repoPath: repoPath)
+            if let error = activateRequestedWorkspace(req, settings: settings) {
+                return ["ok": false, "error": error]
+            }
+            let brief = await makeDebugBrief(settings: settings, engine: engine)
+            let file = EditorBridge.writeBrief(brief, repoPath: brief.context.repoPath)
             let target = AgentTarget(rawValue: (req["for"] as? String) ?? "") ?? .codex
             return ["ok": true, "briefPath": file.path,
                     "prompt": brief.prompt(for: target, briefPath: file.path),
@@ -201,6 +223,69 @@ final class LocalBridge: ObservableObject {
         default:
             return ["ok": false, "error": "unknown op \(op)"]
         }
+    }
+
+    /// Preview/debug commands can target a site without requiring the caller to
+    /// mutate app state through a separate command. The extension uses this for
+    /// its site picker, while existing callers that omit `site` keep the active
+    /// workspace behavior.
+    private func activateRequestedWorkspace(_ req: [String: Any], settings: SettingsStore) -> String? {
+        guard let rawSite = req["site"] as? String, !rawSite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        let site = rawSite.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let workspace = settings.workspaces.first(where: {
+            $0.name.lowercased() == site || $0.slug.lowercased() == site
+        }) else {
+            return "no site named (rawSite)"
+        }
+        settings.setActive(workspace)
+        return nil
+    }
+
+    private func makeDebugBrief(settings: SettingsStore, engine: AgentEngine) async -> DebugBrief {
+        let ws = settings.activeWorkspace
+        let repoPath = ws.flatMap {
+            LocalWorkspaceStore.isCloned($0) ? LocalWorkspaceStore.localPath(for: $0).path : nil
+        }
+        let hasLiveURL = ws.flatMap { SiteWorkspace.normalizedLiveURL($0.configuredLiveURL) } != nil
+        let previewReady = hasLiveURL ? await browser?.ensureAvailable() ?? false : false
+        let html = previewReady ? await browser?.snapshotHTML() ?? "" : ""
+        // A failed navigation must not report console/network breadcrumbs left
+        // over from a different workspace that was previewed earlier.
+        let inspector = previewReady ? browser?.inspector : nil
+        let audit: [SiteAuditIssue]
+        if previewReady, let inspector {
+            audit = SiteAuditor.audit(html: html, inspector: inspector)
+        } else {
+            audit = [SiteAuditIssue(
+                title: "Preview unavailable",
+                detail: hasLiveURL
+                    ? (browser?.navigationError ?? "The live preview could not finish loading.")
+                    : "No valid live URL is configured for this site.",
+                severity: .critical
+            )]
+        }
+        return DebugBrief(
+            generatedAt: Date(), appVersion: "bridge",
+            context: .init(siteName: ws?.name ?? "—", slug: ws?.slug ?? "—",
+                           branch: ws?.gitBranch ?? "—", liveURL: ws?.configuredLiveURL ?? "",
+                           repoPath: repoPath, techStack: ws?.techStack.rawValue ?? "—",
+                           deployment: ws?.deployment.rawValue ?? "—"),
+            consoleErrors: inspector?.consoleLogs.filter { $0.level == .error }.map { $0.text } ?? [],
+            consoleWarnings: inspector?.consoleLogs.filter { $0.level == .warn }.map { $0.text } ?? [],
+            failedRequests: inspector?.networkRequests.compactMap { request in
+                guard let status = request.status, status == 0 || status >= 400 else { return nil }
+                return DebugBrief.Request(method: request.method, url: request.url, status: status)
+            } ?? [],
+            loadMs: inspector?.performance.loadTimeMs,
+            domReadyMs: inspector?.performance.domReadyMs,
+            transferKB: inspector?.performance.transferKB,
+            audit: audit.map { DebugBrief.Finding(severity: $0.severity.rawValue,
+                                                  title: $0.title, detail: $0.detail) },
+            injection: PromptGuard.injectionFindings(in: html),
+            lastAgentError: engine.lastError,
+            stagedChanges: engine.pendingChanges.count)
     }
 
     // MARK: Low-level I/O
