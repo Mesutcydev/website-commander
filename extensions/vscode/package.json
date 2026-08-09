@@ -7,7 +7,7 @@
   "license": "MIT",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
-  "repository": { "type": "git", "url": "https://github.com/yourname/website-commander" },
+  "repository": { "type": "git", "url": "https://github.com/Mesutcydev/website-commander" },
   "main": "./out/extension.js",
   "activationEvents": ["onCommand:websiteCommander.sendSelection", "onCommand:websiteCommander.debugSite", "onCommand:websiteCommander.openPreview", "onCommand:websiteCommander.inspectPreview", "onCommand:websiteCommander.auditPreview", "onCommand:websiteCommander.listSites"],
   "contributes": {

@@ -72,6 +72,8 @@ fi
 echo "==> Packaging .dmg and .zip"
 DMG="$BUILD/WebsiteCommander-$VERSION.dmg"
 ZIP="$BUILD/WebsiteCommander-$VERSION.zip"
+LATEST_DMG="$BUILD/WebsiteCommander.dmg"
+LATEST_ZIP="$BUILD/WebsiteCommander.zip"
 rm -f "$DMG" "$ZIP"
 # hdiutil mis-parses absolute -srcfolder paths that contain spaces, so package
 # from inside the build dir using relative names.
@@ -83,8 +85,20 @@ rm -f "$DMG" "$ZIP"
   ditto -c -k --sequesterRsrc --keepParent WebsiteCommander.app "WebsiteCommander-$VERSION.zip"
 )
 
+# Stable filenames keep the GitHub Pages download buttons valid across releases.
+cp -f "$DMG" "$LATEST_DMG"
+cp -f "$ZIP" "$LATEST_ZIP"
+
 echo "==> Checksums (publish these on your website)"
-shasum -a 256 "$DMG" "$ZIP" | tee "$BUILD/SHA256SUMS.txt"
+CHECKSUM_FILES=("WebsiteCommander.dmg" "WebsiteCommander.zip")
+if [ -f "$BUILD/WebsiteCommander-VSCode.vsix" ]; then
+  CHECKSUM_FILES+=("WebsiteCommander-VSCode.vsix")
+fi
+(
+  cd "$BUILD"
+  shasum -a 256 "${CHECKSUM_FILES[@]}" \
+    | tee "$(basename "$BUILD/SHA256SUMS.txt")"
+)
 
 # If GPG is available, detached-sign the checksum file so users can verify the
 # download came from you (independent of codesign / notarization). Uses your
@@ -121,6 +135,8 @@ cat <<EOF
 Done. Distribute from your website $NOTARIZED_NOTE:
   $DMG
   $ZIP
+  $LATEST_DMG  (stable latest-download filename)
+  $LATEST_ZIP  (stable latest-download filename)
   $BUILD/SHA256SUMS.txt$([ -f "$BUILD/SHA256SUMS.txt.asc" ] && echo "  (+ .asc PGP signature)" || true)
 
 First-launch note for users (Gatekeeper, expected for ad-hoc builds):
