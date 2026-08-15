@@ -69,8 +69,28 @@
         </div>
         <div class="hero-stage reveal" aria-hidden="true">
           <div class="stage-window">
-            <div class="stage-bar"><span></span><span></span><span></span><i>command center</i></div>
-            <img src="assets/screenshots/command-center.png" alt="">
+            <div class="stage-bar"><span></span><span></span><span></span><i>Website Commander — cesur2000/website</i></div>
+            <div class="macmock">
+              <aside class="macmock-side">
+                <b>cesur2000/website</b>
+                <span class="macmock-branch">⎇ main · clean</span>
+                <ul>
+                  <li class="on">index.html</li>
+                  <li>styles.css</li>
+                  <li>app.js</li>
+                  <li>about.html</li>
+                  <li>posts/</li>
+                </ul>
+              </aside>
+              <div class="macmock-main">
+                <div class="chat-line user">Make the hero headline bigger and the CTA clearer.</div>
+                <div class="chat-line agent">Staging 2 files…</div>
+                <div class="diff-line"><span class="d-minus">− &lt;h1&gt;Welcome&lt;/h1&gt;</span></div>
+                <div class="diff-line"><span class="d-plus">+ &lt;h1&gt;Ship better websites&lt;/h1&gt;</span></div>
+                <div class="chat-line agent ok">Diff staged — awaiting your approval.</div>
+                <div class="mock-buttons"><span class="mock-approve">Approve &amp; commit</span><span class="mock-reject">Reject</span></div>
+              </div>
+            </div>
           </div>
           <div class="stage-note">
             <span class="status-dot" aria-hidden="true"></span>
@@ -130,15 +150,45 @@
         </div>
         <div class="gallery-grid">
           <figure class="gallery-card reveal">
-            <img src="assets/screenshots/command-center.png" alt="Website Commander workspace with live site preview beside the agent conversation">
+            <div class="macmock macmock-panel">
+              <aside class="macmock-side">
+                <b>workspace</b>
+                <span class="macmock-branch">⎇ main</span>
+                <ul>
+                  <li class="on">index.html</li>
+                  <li>styles.css</li>
+                  <li>components/</li>
+                </ul>
+              </aside>
+              <div class="macmock-main">
+                <div class="mini-browser"><i>mesut.uk</i><span></span></div>
+                <div class="chat-line user">Add a new pricing section.</div>
+                <div class="chat-line agent ok">Staged · 1 file · +24 lines</div>
+              </div>
+            </div>
             <figcaption>Workspace + live preview</figcaption>
           </figure>
           <figure class="gallery-card reveal">
-            <img src="assets/screenshots/command-center-feed.png" alt="Website Commander agent feed showing tool activity and staged edits">
+            <div class="macmock macmock-panel">
+              <div class="macmock-main">
+                <div class="chat-line user">Why is the footer rendering wider than the viewport?</div>
+                <div class="chat-line agent">Reading styles.css → footer uses fixed 1240px width.</div>
+                <div class="chat-line agent">Fixing: max-width: 100% + box-sizing.</div>
+                <div class="chat-line agent ok">1 file staged — ready to review.</div>
+              </div>
+            </div>
             <figcaption>Agent feed, grouped by activity</figcaption>
           </figure>
           <figure class="gallery-card reveal">
-            <img src="assets/screenshots/command-center-detail.png" alt="Website Commander side-by-side diff review before commit">
+            <div class="macmock macmock-panel">
+              <div class="macmock-main">
+                <div class="diff-line"><span class="d-minus">− footer { width: 1240px; }</span></div>
+                <div class="diff-line"><span class="d-plus">+ footer { max-width: 100%; box-sizing: border-box; }</span></div>
+                <div class="diff-line"><span class="d-minus">− margin: 0 40px;</span></div>
+                <div class="diff-line"><span class="d-plus">+ margin: 0 auto; padding: 0 24px;</span></div>
+                <div class="mock-buttons"><span class="mock-approve">Approve &amp; commit</span><span class="mock-reject">Reject</span></div>
+              </div>
+            </div>
             <figcaption>Diff review before commit</figcaption>
           </figure>
         </div>

@@ -154,6 +154,101 @@
   font-style: normal;
 }
 .stage-window img { width: 100%; height: auto; }
+
+/* Mac app UI mock (hero + proof panels) */
+.macmock {
+  display: flex;
+  min-height: 330px;
+  overflow: hidden;
+  background: var(--term-bg);
+  color: var(--term-text);
+  font: 400 0.76rem/1.55 var(--font-mono);
+  text-align: left;
+}
+.macmock-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 168px;
+  flex-shrink: 0;
+  padding: 16px 14px;
+  border-right: 1px solid var(--term-border, rgba(255, 255, 255, 0.09));
+  background: rgba(255, 255, 255, 0.025);
+}
+.macmock-side b { color: #e6edf3; font-size: 0.78rem; }
+.macmock-branch { color: #9da7b3; font-size: 0.68rem; }
+.macmock-side ul { margin: 4px 0 0; padding: 0; list-style: none; }
+.macmock-side li {
+  padding: 3px 8px;
+  margin: 1px 0;
+  border-radius: 5px;
+  color: #9da7b3;
+  font-size: 0.72rem;
+}
+.macmock-side li.on { color: #79c0ff; background: rgba(121, 192, 255, 0.10); }
+.macmock-main {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  padding: 16px;
+}
+.chat-line {
+  max-width: 88%;
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #c9d1d9;
+}
+.chat-line.user {
+  align-self: flex-start;
+  border-color: rgba(121, 192, 255, 0.35);
+  background: rgba(121, 192, 255, 0.12);
+  color: #d6e9ff;
+}
+.chat-line.agent { align-self: flex-end; }
+.chat-line.ok { color: #7ee2a8; border-color: rgba(63, 185, 80, 0.35); background: rgba(63, 185, 80, 0.10); }
+.diff-line {
+  padding: 6px 11px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.d-minus { color: #ff9b93; background: rgba(248, 81, 73, 0.12); }
+.d-plus { color: #7ee2a8; background: rgba(63, 185, 80, 0.12); }
+.mock-buttons { display: flex; gap: 8px; margin-top: 4px; }
+.mock-approve, .mock-reject {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+.mock-approve { color: #061313; background: #3fb950; }
+.mock-reject { color: #c9d1d9; border: 1px solid rgba(255, 255, 255, 0.22); }
+.macmock-panel { min-height: 240px; border-radius: 0; }
+.macmock-panel .macmock-side { width: 128px; }
+.macmock-panel .macmock-main { padding: 14px; gap: 8px; }
+.mini-browser {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  color: #9da7b3;
+}
+.mini-browser i { font-style: normal; color: #79c0ff; }
+.mini-browser span {
+  flex: 1;
+  height: 10px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.gallery-card .macmock-panel { border-radius: 0 0 0 0; }
 .stage-note {
   position: absolute;
   left: 50%;
