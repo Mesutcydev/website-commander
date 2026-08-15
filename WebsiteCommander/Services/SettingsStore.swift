@@ -413,6 +413,7 @@ final class SettingsStore: ObservableObject {
     static var fileURL: URL = SettingsStore.defaultFileURL()
 
     init() {
+        Keychain.prime()
         load()
         refreshReadiness()
         refreshPairedProviders()

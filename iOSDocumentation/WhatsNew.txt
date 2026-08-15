@@ -1,0 +1,63 @@
+SiteAgent 1.15 — OpenRouter Free + LongCat
+
+• Added OpenRouter Free as a free-tier assistant option
+• OpenRouter Free uses the official `openrouter/free` capability-aware router
+• OpenRouter Free shares your OpenRouter API key while keeping paid OpenRouter models behind Super
+• Added first-class LongCat API support with LongCat-2.0
+• LongCat supports streaming chat through its OpenAI-compatible API
+• LongCat keys are stored securely in Keychain
+
+What to test:
+1. On the free SiteAgent tier, select OpenRouter Free and save an OpenRouter key.
+2. Confirm the only available model is `openrouter/free`.
+3. Send a coding request and confirm SiteAgent can stream a response and run tools.
+4. With Super enabled, select LongCat and save a LongCat API key.
+5. Confirm LongCat-2.0 is selected and a text-only coding request completes.
+
+Previous improvements in 1.15:
+
+• Smart Routing now understands quick fixes, planning and audits, and site-wide bulk changes
+• Models are scored for quality, coding strength, planning, speed, cost, and large-change capability
+• Added Settings → Assistant → Configure Smart Routing
+• Choose Quality, Code, or Budget as the routing goal
+• Choose exactly which connected providers Smart Routing may use
+• Choose a preferred model from each provider’s live model catalog
+• Provider model lists refresh automatically when Smart Routing settings open
+• Preferred models fall back safely if a provider removes or disables one
+• Qwen Code and Kimi Code can now participate in Smart Routing
+• Image requests automatically exclude text-only models
+• Routing decisions are recorded in diagnostics with task, provider, model, and reason
+
+• Added Grok 4.5 and the grok-4.5-latest alias to the xAI model picker
+• Grok smart routing now prefers Grok 4.5
+• Updated Grok 4.5 usage estimates to current xAI API pricing
+• Kept Apple’s native Liquid Glass tab bar fully visible while scrolling
+• Removed the scroll-driven single-icon tab bar collapse and expansion
+• Restored the compact provider-first model picker while keeping global search
+• The active provider opens automatically; tap any provider to see its complete model list
+• Each provider now shows its available model count
+• Refresh now updates every provider catalog instead of only the active provider
+• Search continues to find models and providers across the complete catalog
+• Added first-class Qwen Code API support through Alibaba Cloud Coding Plan
+• Added Qwen 3.8 Max Preview (`qwen3.8-max-preview`) to the Qwen model picker
+• Live Qwen model discovery now merges with SiteAgent’s latest curated catalog, so newly enabled preview models do not disappear when Alibaba’s `/models` response lags
+• Fixed Qwen Code 401 errors caused by region-bound or plan-bound keys
+• Added Alibaba Token Plan support through the Southeast Asia MAAS endpoint
+• Qwen now automatically tries Token Plan, Coding Plan, and ModelStudio endpoints across supported regions
+• Added first-class Kimi Code membership API support
+• Qwen Code includes Qwen3 Coder Plus, Coder Next, and current Plus models
+• Kimi Code includes K3, Kimi K2.7 Code, and Kimi K2.7 Code HighSpeed
+• API keys are stored securely in Keychain
+• Both providers support streaming chat and SiteAgent tool calls
+• Both providers appear in Settings, onboarding, and the searchable Chat model picker
+• Includes the searchable model picker, polished site picker, and deployment guidance
+
+Smart Routing checks:
+1. Open Settings → Assistant and enable Smart Auto-Routing.
+2. Tap Configure Smart Routing and choose Quality, Code, or Budget.
+3. Confirm only providers you connected with a valid key or sign-in appear.
+4. Turn providers on or off, then choose a preferred model for each enabled provider.
+5. Send “Fix the typo in the hero title” and confirm the request completes.
+6. Send “Audit the whole site and plan improvements across every page” and confirm a capable planning/bulk model is used.
+7. Attach an image and request a visual change; confirm Smart Routing uses an image-capable provider.
+8. Reopen Configure Smart Routing and confirm provider and model choices were saved.

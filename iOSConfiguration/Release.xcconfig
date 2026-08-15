@@ -1,0 +1,3 @@
+#include "Base.xcconfig"
+
+CODE_SIGN_ENTITLEMENTS = iOS/SiteAgent/Production.entitlements

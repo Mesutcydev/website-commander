@@ -1,0 +1,12 @@
+// Base.xcconfig
+// Shared build settings for all configurations in SiteAgent.
+//
+// DEVELOPMENT_TEAM is provided per-developer by Configuration/Developer.xcconfig
+// (gitignored). Copy Developer.xcconfig.example to Developer.xcconfig and fill
+// in your team ID. The include is resolved at build time, not generation time,
+// so xcodegen still succeeds if Developer.xcconfig is missing.
+#include? "Developer.xcconfig"
+
+// Allow configuration-specific keys in the shared generated Info.plist.
+INFOPLIST_PREPROCESS = YES
+INFOPLIST_PREPROCESSOR_DEFINITIONS = $(inherited)

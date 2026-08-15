@@ -39,6 +39,19 @@ runs entirely on your machine, and keeps your credentials in the macOS Keychain.
 - [VSCode](https://code.visualstudio.com/) with the `code` CLI on your PATH
   (optional, for the Open-in-VSCode feature)
 
+## Website
+
+The public marketing site lives in [`website/`](website/) and is the canonical source for the Website Commander Pages deployment. The portfolio app page is [`mesut.uk/apps/website-commander`](https://mesut.uk/apps/website-commander). It is a dependency-free static site with a responsive command-deck design, real app screenshots, and a privacy overview.
+
+Validate and preview it locally:
+
+```bash
+./Scripts/check-website.sh
+python3 -m http.server 8080 --directory website
+```
+
+The Pages workflow in `.github/workflows/pages.yml` deploys it from `main` when GitHub Pages is configured for GitHub Actions. The portfolio entry at `https://mesut.uk/apps/website-commander` points to this canonical site. See [`docs/github-pages-sync.md`](docs/github-pages-sync.md) for the separate `<owner>.github.io` synchronization path.
+
 ## Build
 
 ```bash

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>keychain-access-groups</key>
+  <array>
+    <string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  </array>
+  <!-- Mac Catalyst entitlements. Intentionally minimal so local/dev signing
+       just works — the iOS Jetsam/VA memory entitlements don't exist on macOS.
+       ponytail: empty for dev. Mac App Store distribution additionally needs
+       App Sandbox + the matching capabilities, e.g.:
+         com.apple.security.app-sandbox            -> true
+         com.apple.security.network.client         -> true   (LLM/GitHub APIs)
+         com.apple.security.files.user-selected.read-write -> true (file browser)
+       Add those only when you actually ship to the Mac App Store. -->
+</dict>
+</plist>

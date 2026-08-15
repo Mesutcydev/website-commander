@@ -1,0 +1,8 @@
+// Developer.xcconfig.example — copy to Developer.xcconfig and set your team.
+// Developer.xcconfig is gitignored so the team ID never gets committed.
+//
+//   cp Configuration/Developer.xcconfig.example Configuration/Developer.xcconfig
+//
+// Then paste your Apple Developer Team ID (found in Xcode, or
+// https://developer.apple.com/account → Membership Details → Team ID).
+DEVELOPMENT_TEAM =

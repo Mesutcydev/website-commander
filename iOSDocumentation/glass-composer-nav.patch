@@ -1,0 +1,92 @@
+diff --git a/SiteAgent/SiteAgentApp.swift b/SiteAgent/SiteAgentApp.swift
+index c3a3ba0..a0d3b09 100644
+--- a/SiteAgent/SiteAgentApp.swift
++++ b/SiteAgent/SiteAgentApp.swift
+@@ -35,17 +35,27 @@ struct SiteAgentApp: App {
+     /// Glass-restyle the native nav + tab bars so the gradient backdrop shows
+     /// through and titles use the display font. Set once via appearance proxies.
+     private static func configureChrome() {
+-        let nav = UINavigationBarAppearance()
+-        nav.configureWithTransparentBackground()   // gradient shows behind titles
+-        if let title = UIFont(name: "BricolageGrotesque-Bold", size: 17) {
+-            nav.titleTextAttributes = [.font: title, .foregroundColor: UIColor.label]
+-        }
+-        if let large = UIFont(name: "BricolageGrotesque-ExtraBold", size: 32) {
+-            nav.largeTitleTextAttributes = [.font: large, .foregroundColor: UIColor.label]
++        // Two appearances so the top nav behaves like the tab bar: clear at rest
++        // (scroll edge) so the header/gradient shows, then Liquid Glass once
++        // content scrolls under it (standard/compact) — cards frost through the
++        // glass instead of sliding under a flat transparent strip.
++        let applyFonts: (UINavigationBarAppearance) -> Void = { a in
++            if let title = UIFont(name: "BricolageGrotesque-Bold", size: 17) {
++                a.titleTextAttributes = [.font: title, .foregroundColor: UIColor.label]
++            }
++            if let large = UIFont(name: "BricolageGrotesque-ExtraBold", size: 32) {
++                a.largeTitleTextAttributes = [.font: large, .foregroundColor: UIColor.label]
++            }
+         }
+-        UINavigationBar.appearance().standardAppearance = nav
+-        UINavigationBar.appearance().scrollEdgeAppearance = nav
+-        UINavigationBar.appearance().compactAppearance = nav
++        let atRest = UINavigationBarAppearance()
++        atRest.configureWithTransparentBackground()   // top: gradient shows behind titles
++        applyFonts(atRest)
++        let scrolled = UINavigationBarAppearance()
++        scrolled.configureWithDefaultBackground()      // scrolled: Liquid Glass on iOS 26
++        applyFonts(scrolled)
++        UINavigationBar.appearance().scrollEdgeAppearance = atRest
++        UINavigationBar.appearance().standardAppearance = scrolled
++        UINavigationBar.appearance().compactAppearance = scrolled
+ 
+         // Intentionally NOT overriding UITabBarAppearance: let the system render
+         // its native tab bar — on iOS 26 that's the Liquid Glass floating bar,
+diff --git a/SiteAgent/Views/ChatView.swift b/SiteAgent/Views/ChatView.swift
+index 426b27c..3cd53fd 100644
+--- a/SiteAgent/Views/ChatView.swift
++++ b/SiteAgent/Views/ChatView.swift
+@@ -56,17 +56,23 @@ struct ChatView: View {
+ 
+     var body: some View {
+         NavigationStack {
+-            VStack(spacing: 0) {
+-                transcript
+-                // One approver at a time: while an approval request is active the
+-                // in-chat ApprovalCard owns the decision (with its own file list +
+-                // review), so don't also pin the redundant bar over the input.
+-                if !engine.pendingChanges.isEmpty && engine.pendingApproval == nil {
+-                    PendingChangesBar()
+-                        .transition(.move(edge: .bottom).combined(with: .opacity))
++            transcript
++                // Pin the composer as a bottom safe-area inset instead of stacking
++                // it below the transcript. This lets the transcript scroll BEHIND
++                // the composer, so its glass frosts the live messages passing under
++                // it — the way the native tab bar refracts scrolling content.
++                .safeAreaInset(edge: .bottom, spacing: 0) {
++                    VStack(spacing: 0) {
++                        // One approver at a time: while an approval request is active
++                        // the in-chat ApprovalCard owns the decision, so don't also
++                        // pin the redundant bar over the input.
++                        if !engine.pendingChanges.isEmpty && engine.pendingApproval == nil {
++                            PendingChangesBar()
++                                .transition(.move(edge: .bottom).combined(with: .opacity))
++                        }
++                        inputBar
++                    }
+                 }
+-                inputBar
+-            }
+             .background(CommandDeckBackground())
+             .environment(\.secondarySurface, secondaryBG)
+             .navigationBarTitleDisplayMode(.inline)
+@@ -963,7 +969,10 @@ struct ChatView: View {
+         }
+         .padding(.horizontal)
+         .padding(.vertical, 8)
+-        .background(.bar)
++        // Clear glass, not the opaque `.bar` — with the transcript now scrolling
++        // behind it (see safeAreaInset in `body`), the thin material frosts the
++        // live messages. Bleed under the home indicator so it reads as one bar.
++        .background(.ultraThinMaterial, ignoresSafeAreaEdges: .bottom)
+         .animation(Theme.snappy, value: attachments.count)
+         .animation(Theme.snappy, value: engine.isWaitingForConnection)
+         .confirmationDialog("Add to chat", isPresented: $showAttachMenu, titleVisibility: .visible) {

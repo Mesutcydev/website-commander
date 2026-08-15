@@ -1,0 +1,26 @@
+:root {
+  --ink: #edf7f4;
+  --ink-soft: #b6c8c4;
+  --ink-faint: #70817d;
+  --canvas: #071013;
+  --canvas-raised: #0b171a;
+  --surface: rgba(18, 34, 36, .74);
+  --surface-solid: #102022;
+  --line: rgba(184, 224, 216, .14);
+  --line-bright: rgba(184, 224, 216, .26);
+  --teal: #5ce1ba;
+  --teal-soft: #b2f5dc;
+  --indigo: #818aff;
+  --amber: #f7c768;
+  --danger: #ff8e8e;
+  --success: #5ce1ba;
+  --display: ui-rounded, "SF Pro Rounded", "Avenir Next", system-ui, sans-serif;
+  --body: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --max: 1180px;
+  --gutter: clamp(1.25rem, 4vw, 4rem);
+  --radius-s: 10px;
+  --radius-m: 18px;
+  --radius-l: 28px;
+  --ease: cubic-bezier(.22, .8, .24, 1);
+}

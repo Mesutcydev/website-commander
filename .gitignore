@@ -17,3 +17,5 @@ xcuserdata/
 *.pem
 secrets/
 Scripts/.window-id
+Configuration/Developer.xcconfig
+iOSConfiguration/Developer.xcconfig

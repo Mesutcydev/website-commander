@@ -1,0 +1,108 @@
+{
+  "identifier" : "E2B7A8CD",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayVersion" : 1,
+      "familyShareable" : false,
+      "displayPrice" : "19.99",
+      "internalID" : "A6B8C0DF",
+      "localizations" : [
+        {
+          "description" : "One-time unlock for Super features.",
+          "displayName" : "Website Commander Super Lifetime",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "uk.mesut.SiteAgent.pro.lifetime",
+      "referenceName" : "Website Commander Super Lifetime",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA"
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "7F9C6E2D",
+      "localizations" : [
+
+      ],
+      "name" : "Website Commander Super",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayVersion" : 1,
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "displayPrice" : "1.99",
+          "internalID" : "D6E8F0A2",
+          "introductoryOffer" : {
+            "internalID" : "3C5D6E7F",
+            "numberOfPeriods" : 1,
+            "period" : "week",
+            "paymentMode" : "free",
+            "type" : "IntroductoryOffer"
+          },
+          "localizations" : [
+            {
+              "description" : "Unlimited sites, inspector, routing.",
+              "displayName" : "Website Commander Super Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "uk.mesut.SiteAgent.sub.monthly",
+          "recurringSubscriptionPeriod" : "month",
+          "referenceName" : "Website Commander Super Monthly",
+          "subscriptionGroupID" : "7F9C6E2D",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayVersion" : 1,
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "displayPrice" : "11.99",
+          "internalID" : "E7F9A1B3",
+          "introductoryOffer" : {
+            "internalID" : "4D6E7F80",
+            "numberOfPeriods" : 1,
+            "period" : "week",
+            "paymentMode" : "free",
+            "type" : "IntroductoryOffer"
+          },
+          "localizations" : [
+            {
+              "description" : "Best value yearly Super access.",
+              "displayName" : "Website Commander Super Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "uk.mesut.SiteAgent.sub.yearly",
+          "recurringSubscriptionPeriod" : "year",
+          "referenceName" : "Website Commander Super Yearly",
+          "subscriptionGroupID" : "7F9C6E2D",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

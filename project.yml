@@ -16,6 +16,23 @@ settings:
     CODE_SIGN_STYLE: Automatic
     GENERATE_INFOPLIST_FILE: YES
     ENABLE_HARDENED_RUNTIME: YES
+configs:
+  Debug: debug
+  Release: release
+  AppStore: release
+  Sideload: release
+  PCC-TestFlight: release
+  Debug-PCC: debug
+packages:
+  mlx-swift:
+    url: https://github.com/PrismML-Eng/mlx-swift.git
+    branch: prism
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    from: 3.31.4
+  swift-transformers-mlx:
+    url: https://github.com/DePasqualeOrg/swift-transformers-mlx
+    from: 0.2.0
 targets:
   WebsiteCommander:
     type: application
@@ -33,7 +50,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: uk.mesut.WebsiteCommander
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        INFOPLIST_KEY_CFBundleDisplayName: Website Commander
+        INFOPLIST_KEY_CFBundleDisplayName: WebCom
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
         INFOPLIST_KEY_NSHumanReadableCopyright: "Open source — MIT License"
         CODE_SIGN_ENTITLEMENTS: WebsiteCommander/Resources/WebsiteCommander.entitlements
@@ -76,6 +93,80 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: uk.mesut.WebsiteCommanderTests
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: ""
+  SiteAgent:
+    type: application
+    platform: iOS
+    sources:
+      - path: iOS/SiteAgent
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.mesut.SiteAgent
+        ENABLE_TESTABILITY: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-Original AppIcon-Black AppIcon-Beige"
+        INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_FILE: iOSConfiguration/OAuthURLTypes.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Website Commander
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: YES
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        CODE_SIGN_ENTITLEMENTS[sdk=macosx*]: iOS/SiteAgent/SiteAgent-Catalyst.entitlements
+      Debug:
+        CODE_SIGN_ENTITLEMENTS: iOS/SiteAgent/Production.entitlements
+      Release:
+        CODE_SIGN_ENTITLEMENTS: iOS/SiteAgent/Production.entitlements
+      AppStore:
+        CODE_SIGN_ENTITLEMENTS: iOS/SiteAgent/Production.entitlements
+      Sideload:
+        CODE_SIGN_ENTITLEMENTS: iOSConfiguration/SideloadMemory.entitlements
+      PCC-TestFlight:
+        CODE_SIGN_ENTITLEMENTS: iOS/SiteAgent/PCC.entitlements
+      Debug-PCC:
+        CODE_SIGN_ENTITLEMENTS: iOS/SiteAgent/PCC.entitlements
+    configFiles:
+      Debug: iOSConfiguration/Debug.xcconfig
+      Release: iOSConfiguration/Release.xcconfig
+      AppStore: iOSConfiguration/AppStore.xcconfig
+      Sideload: iOSConfiguration/Sideload.xcconfig
+      PCC-TestFlight: iOSConfiguration/PCC-TestFlight.xcconfig
+      Debug-PCC: iOSConfiguration/Debug-PCC.xcconfig
+    dependencies:
+      - package: mlx-swift
+        product: MLX
+      - package: mlx-swift
+        product: MLXNN
+      - package: mlx-swift
+        product: MLXRandom
+      - package: mlx-swift
+        product: MLXFast
+      - package: mlx-swift-lm
+        product: MLXLLM
+      - package: mlx-swift-lm
+        product: MLXLMCommon
+      - package: swift-transformers-mlx
+        product: MLXLMTransformers
+    scheme:
+      testTargets:
+        - SiteAgentTests
+  SiteAgentTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: iOSTests/SiteAgentTests
+    configFiles:
+      Debug: iOSConfiguration/Debug.xcconfig
+      Release: iOSConfiguration/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.mesut.SiteAgentTests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: ""
+    dependencies:
+      - target: SiteAgent
 schemes:
   WebsiteCommander:
     build:
@@ -95,3 +186,35 @@ schemes:
         wc: all
     run:
       config: Debug
+  SiteAgent:
+    build:
+      targets:
+        SiteAgent: all
+    run:
+      config: Debug
+    test:
+      config: Release
+      targets:
+        - SiteAgentTests
+    profile:
+      config: Release
+    analyze:
+      config: Release
+    archive:
+      config: AppStore
+  SiteAgent-PCC:
+    build:
+      targets:
+        SiteAgent: all
+    run:
+      config: Debug-PCC
+    test:
+      config: PCC-TestFlight
+      targets:
+        - SiteAgentTests
+    profile:
+      config: PCC-TestFlight
+    analyze:
+      config: PCC-TestFlight
+    archive:
+      config: PCC-TestFlight

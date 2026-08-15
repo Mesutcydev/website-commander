@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071013">
+  <meta name="description" content="Website Commander privacy overview: local credentials, direct provider requests, and explicit approval before commits.">
+  <meta property="og:url" content="https://mesutcydev.github.io/website-commander/privacy.html">
+  <link rel="canonical" href="https://mesutcydev.github.io/website-commander/privacy.html">
+  <title>Privacy — Website Commander</title>
+  <link rel="icon" href="assets/app-icon.png" type="image/png">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/responsive.css">
+  <script defer src="js/site.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <div class="site-shell">
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Website Commander home"><img src="assets/app-icon.png" alt="" width="42" height="42"><span>Website Commander</span></a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav"><span class="sr-only">Open navigation</span><span aria-hidden="true"></span><span aria-hidden="true"></span></button>
+      <nav id="site-nav" class="site-nav" aria-label="Primary navigation"><a href="./#workflow">Workflow</a><a href="./#proof">Product</a><a href="privacy.html" aria-current="page">Privacy</a><a href="https://github.com/Mesutcydev/website-commander" rel="noreferrer">GitHub</a><a class="button button-small button-solid" href="./#download">Get the app</a></nav>
+    </header>
+    <main id="main-content" class="legal-page">
+      <p class="eyebrow">Privacy overview</p>
+      <h1>Keep the keys local.<br><em>Keep the boundary clear.</em></h1>
+      <p class="legal-lede">Website Commander is designed as a local Mac tool. It connects to the services you choose, stores credentials in the macOS Keychain, and keeps repository changes visible before they are committed.</p>
+      <p class="legal-updated">Last updated: August 2026</p>
+      <div class="legal-layout">
+        <aside class="legal-nav" aria-label="On this page"><span>On this page</span><a href="#data">Data and credentials</a><a href="#providers">Provider requests</a><a href="#repositories">Repositories and content</a><a href="#control">Your control</a></aside>
+        <div class="legal-content">
+          <section id="data"><h2>Data and credentials</h2><p>Provider API keys, GitHub credentials, and deployment secrets are stored in the macOS Keychain. Workspace preferences and non-secret configuration can be stored locally and, where enabled by the app, synchronized through iCloud. Secrets are not included in workspace sync.</p></section>
+          <section id="providers"><h2>Provider requests</h2><p>When you configure an AI provider or GitHub, Website Commander sends requests directly to that service. The app does not operate a proxy service for those requests. Each provider may process data according to its own terms and privacy policy.</p></section>
+          <section id="repositories"><h2>Repositories and content</h2><p>The agent reads repository files to understand a request and may stage changes in the local workspace. Repository files, rendered pages, and other connected content are treated as untrusted input. Do not place credentials or private information in a repository unless you intend to share it with the services you configure.</p></section>
+          <section id="control"><h2>Your control</h2><p>Changes are staged for review before a commit. Review generated code, deployment settings, and provider responses before approving work. Website Commander does not guarantee that generated code is correct or secure; you remain responsible for the changes you approve and deploy.</p></section>
+          <section><h2>Open source</h2><p>The source is available on <a href="https://github.com/Mesutcydev/website-commander" rel="noreferrer">GitHub</a>. For security reports, use the repository’s <a href="https://github.com/Mesutcydev/website-commander/security" rel="noreferrer">security guidance</a>.</p></section>
+        </div>
+      </div>
+    </main>
+    <footer class="site-footer"><div class="footer-brand"><a class="brand" href="./"><img src="assets/app-icon.png" alt="" width="34" height="34"><span>Website Commander</span></a><p>Native website operations, with a human at the commit boundary.</p></div><div class="footer-links"><a href="./">Home</a><a href="https://github.com/Mesutcydev/website-commander/security" rel="noreferrer">Security</a><a href="https://github.com/Mesutcydev/website-commander/blob/main/LICENSE" rel="noreferrer">MIT License</a><a href="https://github.com/Mesutcydev/website-commander" rel="noreferrer">GitHub</a></div><p class="footer-meta">© 2026 Website Commander</p></footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,56 @@
+apiVersion: ssu/v1
+nlu:
+  shortcuts:
+    bundleIdentifier: uk.mesut.SiteAgent
+    intents:
+    - metadata:
+        name: RunPromptIntent_0
+        title: Run SiteAgent Prompt
+      corpuses:
+        training:
+        - locale: en
+          utterances:
+          - '{${+prefix} }Run a prompt in ${+applicationName}'
+          - '{${+prefix} }Ask ${+applicationName} to update my site'
+        - locale: tr
+          utterances:
+          - '{${+prefix} }Run a prompt in ${+applicationName}'
+          - '{${+prefix} }Ask ${+applicationName} to update my site'
+    - metadata:
+        name: +negative
+      corpuses:
+        training:
+        - locale: en
+          utterances:
+          - '{${+prefix} }${+standardAppShortcutNegatives}'
+        - locale: tr
+          utterances:
+          - '{${+prefix} }${+standardAppShortcutNegatives}'
+variables:
+- name: +applicationName
+  type: ssu/expansion
+  definitions:
+  - locale: en
+    synomyms:
+    - SiteAgent
+  - locale: tr
+    synomyms:
+    - SiteAgent
+- name: +prefix
+  type: ssu/expansion
+  definitions:
+  - locale: en
+    synomyms:
+      $ref: ssu://Resources/prefix/en.yaml
+  - locale: tr
+    synomyms:
+      $ref: ssu://Resources/prefix/tr.yaml
+- name: +standardAppShortcutNegatives
+  type: ssu/expansion
+  definitions:
+  - locale: en
+    synomyms:
+      $ref: ssu://Resources/standardAppShortcutNegatives/en.yaml
+  - locale: tr
+    synomyms:
+      $ref: ssu://Resources/standardAppShortcutNegatives/tr.yaml

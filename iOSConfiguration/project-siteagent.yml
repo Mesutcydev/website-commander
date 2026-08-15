@@ -1,0 +1,143 @@
+name: SiteAgent
+options:
+  bundleIdPrefix: uk.mesut
+  developmentLanguage: en   # base language; tr.lproj adds Turkish
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"   # Mac Catalyst minimum (maps from iOS 17)
+  createIntermediateGroups: true
+# AppleFM: a Debug variant that compiles the Apple Foundation Models + Private
+# Cloud Compute integration (APPLE_FM flag, scoped to the app target so it never
+# leaks into SwiftPM deps). Build it ONLY with Xcode 27: `-configuration AppleFM`.
+# Default Debug/Release builds stay on the release Xcode and exclude all of it.
+configs:
+  Debug: debug
+  Release: release
+  AppStore: release
+  Sideload: release
+  PCC-TestFlight: release
+  Debug-PCC: debug
+settings:
+  base:
+    MARKETING_VERSION: "2.0"
+    # Build numbers follow 2026MMDDNN (NN = upload index that day). Distinct from
+    # any prior TestFlight upload under the same marketing version.
+    # Marketing version must be > last App Store approved train (currently 1.10).
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    # DEVELOPMENT_TEAM is NOT hardcoded here — it lives in the per-developer
+    # gitignored Configuration/Developer.xcconfig (included by Base.xcconfig),
+    # so each developer signs with their own team without leaking the value
+    # into the repo. Generation still succeeds if that file is absent; only
+    # code signing needs it.
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: NO
+    INFOPLIST_FILE: Configuration/OAuthURLTypes.plist
+    # MLX-swift ships Metal build-tool scripts that fail under the user-script
+    # sandbox, so it must be disabled project-wide (matches the on-device LLM ref).
+    # SECURITY NOTE: this weakens build-time supply-chain isolation. Keep MLX
+    # versions pinned via committed Package.resolved and review upgrades carefully.
+    # Do NOT flip to YES until MLX's build tools are sandbox-compatible.
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    # Quiet the App Intents metadata extractor's non-actionable warnings.
+    LM_FILTER_WARNINGS: YES
+packages:
+  mlx-swift:
+    # Prism's upstream-compatible runtime includes the low-bit affine kernels
+    # used by the experimental Bonsai family. Keep this aligned with CodeLens,
+    # where the same models are already exercised on iOS.
+    url: https://github.com/PrismML-Eng/mlx-swift.git
+    branch: prism
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    from: 3.31.4
+  swift-transformers-mlx:
+    url: https://github.com/DePasqualeOrg/swift-transformers-mlx
+    from: 0.2.0
+targets:
+  SiteAgent:
+    type: application
+    platform: iOS
+    sources:
+      - path: SiteAgent
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.mesut.SiteAgent
+        ENABLE_TESTABILITY: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-Original AppIcon-Black AppIcon-Beige"
+        INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Website Commander
+        # App uses only standard/exempt encryption (HTTPS) — declare it so builds
+        # aren't gated on "Missing Compliance" in TestFlight/App Store.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        # All device families support all orientations so App Store archive
+        # validation does not require full-screen mode.
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # Mac Catalyst: scaled-iPad idiom (laziest; switch to "Optimize for Mac"
+        # via SUPPORTS_MAC_CATALYST_MACOS_UI_IDIOM if native controls are wanted).
+        SUPPORTS_MACCATALYST: YES
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        # Mac has no Jetsam limit; iOS-only memory entitlements would fail Mac
+        # signing, so Catalyst (macosx SDK) gets its own minimal entitlements.
+        CODE_SIGN_ENTITLEMENTS[sdk=macosx*]: SiteAgent/SiteAgent-Catalyst.entitlements
+    configFiles:
+      Debug: Configuration/Debug.xcconfig
+      Release: Configuration/Release.xcconfig
+      AppStore: Configuration/AppStore.xcconfig
+      Sideload: Configuration/Sideload.xcconfig
+      PCC-TestFlight: Configuration/PCC-TestFlight.xcconfig
+      Debug-PCC: Configuration/Debug-PCC.xcconfig
+    dependencies:
+      - package: mlx-swift
+        product: MLX
+      - package: mlx-swift
+        product: MLXNN
+      - package: mlx-swift
+        product: MLXRandom
+      - package: mlx-swift
+        product: MLXFast
+      - package: mlx-swift-lm
+        product: MLXLLM
+      - package: mlx-swift-lm
+        product: MLXLMCommon
+      - package: swift-transformers-mlx
+        product: MLXLMTransformers
+    scheme:
+      testTargets:
+        - SiteAgentTests
+  SiteAgentTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SiteAgentTests
+    configFiles:
+      Debug: Configuration/Debug.xcconfig
+      Release: Configuration/Release.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.mesut.SiteAgentTests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: ""
+    dependencies:
+      - target: SiteAgent
+schemes:
+  SiteAgent-PCC:
+    build:
+      targets:
+        SiteAgent: all
+    run:
+      config: Debug-PCC
+    test:
+      config: PCC-TestFlight
+      targets:
+        - SiteAgentTests
+    profile:
+      config: PCC-TestFlight
+    analyze:
+      config: PCC-TestFlight
+    archive:
+      config: PCC-TestFlight

@@ -1,0 +1,9 @@
+#include "Release.xcconfig"
+
+// The sideload distribution intentionally carries the same local unlock
+// marker as the known-good legacy IPA. This is separate from App Store and
+// TestFlight configurations and must never be used for store submission.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) SIDELOAD_BUILD
+INFOPLIST_PREPROCESS = YES
+INFOPLIST_PREPROCESSOR_DEFINITIONS = $(inherited) SIDELOAD_BUILD
+CODE_SIGN_ENTITLEMENTS = iOSConfiguration/SideloadMemory.entitlements

@@ -177,6 +177,12 @@ final class WebsiteCommanderTests: XCTestCase {
         XCTAssertLessThan(Attachment.maximumTextBytes, Attachment.maximumImageBytes)
     }
 
+    func testKeychainAPIUsesStableCredentialKeys() {
+        XCTAssertEqual(Keychain.githubTokenKey(nil), "github.token")
+        let id = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        XCTAssertEqual(Keychain.githubTokenKey(id), "github.\(id.uuidString)")
+    }
+
     // MARK: - Remote parsing (CLI auto-detect + multi-account)
 
     func testParseRemoteSSH() {
