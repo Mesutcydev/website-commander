@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#ffffff">
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
-  <meta name="description" content="Website Commander is a native Mac command center with an iPhone and iPad companion for editing, reviewing, and deploying sites from GitHub. Every change is staged until you approve it.">
+  <meta name="description" content="Website Commander is a native macOS website agent for editing, reviewing, and deploying GitHub-hosted sites from plain English — with an iPhone and iPad companion. Every change is staged until you approve it.">
   <meta name="author" content="Mesut Yagci">
   <meta property="og:title" content="Website Commander — take command of your websites">
   <meta property="og:description" content="Describe a change. Review the diff. Approve the commit. Website Commander keeps website work close to the code and under your control.">
@@ -42,9 +42,9 @@
       <nav id="site-nav" class="site-nav" aria-label="Primary navigation">
         <a href="#overview">Overview</a>
         <a href="#workflow">Workflow</a>
-        <a href="#screens">Screens</a>
         <a href="#features">Features</a>
         <a href="#download">Download</a>
+        <a href="#ios">iPhone &amp; iPad</a>
         <a class="button button-primary button-sm" href="#download">Get the app</a>
       </nav>
     </div>
@@ -54,16 +54,15 @@
     <section class="hero" id="overview" aria-labelledby="hero-title">
       <div class="shell hero-grid">
         <div class="hero-copy reveal">
-          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Mac command center · iPhone + iPad companion</p>
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Native macOS website agent</p>
           <h1 id="hero-title">Put your website on the <em>command deck.</em></h1>
           <p class="lede">Describe a change in plain English. Review the diff. Approve the commit. Website Commander keeps every edit staged until you say ship — your keys stay in Keychain, and nothing goes live without you.</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#download">Download for Mac <span aria-hidden="true">↓</span></a>
+            <a class="button button-primary" href="https://github.com/Mesutcydev/website-commander/releases/download/v1.0.9/WebsiteCommander-1.0.9.dmg">Download for Mac <span aria-hidden="true">↓</span></a>
             <a class="button button-secondary" href="#workflow">See the workflow</a>
           </div>
           <dl class="hero-facts" aria-label="Product facts">
             <div><dt>Desktop</dt><dd>macOS 14+</dd></div>
-            <div><dt>Companion</dt><dd>iOS + iPadOS</dd></div>
             <div><dt>Boundary</dt><dd>Staged first</dd></div>
             <div><dt>Credentials</dt><dd>Keychain</dd></div>
           </dl>
@@ -171,75 +170,64 @@
           </article>
           <article class="feature-card reveal">
             <h3>Deploy integrations</h3>
-            <p>Ship to GitHub Pages, Vercel, Netlify, and more — then track build status in the conversation.</p>
+            <p>Ship to GitHub Pages, Vercel, Netlify, Cloudflare Workers, and more — then track build status in the conversation.</p>
           </article>
           <article class="feature-card reveal">
-            <h3>iPhone &amp; iPad companion</h3>
-            <p>The same workspace in your pocket: check state, review changes, and deploy from the field.</p>
+            <h3>wc command-line tool</h3>
+            <p>The bundled <code>wc</code> CLI drives the same engine from your terminal, so other agents and scripts can manage the site too.</p>
           </article>
-        </div>
-      </div>
-    </section>
-
-    <section class="section section-alt" aria-labelledby="companion-title">
-      <div class="shell companion-grid">
-        <div class="companion-copy reveal">
-          <p class="eyebrow">On the move</p>
-          <h2 id="companion-title">The deck in your pocket.</h2>
-          <p>When you are away from the desk, the iPhone and iPad companion keeps the state of your sites close — review a staged diff, approve a commit, and watch the deployment land.</p>
-          <a class="button button-secondary" href="#download">Get the iOS build <span aria-hidden="true">↓</span></a>
-        </div>
-        <div class="companion-stage reveal" aria-hidden="true">
-          <img src="assets/screenshots/ios-command-center.png" alt="">
-          <img src="assets/screenshots/ios-command-center-feed.png" alt="">
-          <img src="assets/screenshots/ios-command-center-detail.png" alt="">
         </div>
       </div>
     </section>
 
     <section class="section" id="download" aria-labelledby="download-title">
       <div class="shell">
-        <div class="section-title reveal">
-          <p class="eyebrow">Choose your build</p>
-          <h2 id="download-title">Take command of the next release.</h2>
-          <p>One workflow across the desk and the field. Every published build ships with release notes and checksums.</p>
-        </div>
-        <div class="download-grid">
-          <article class="download-card reveal">
-            <div class="download-card-head">
-              <img src="assets/app-icon.png" alt="" width="44" height="44">
-              <div>
-                <span class="card-label">DESKTOP · macOS 14+</span>
-                <h3>Website Commander for Mac</h3>
-              </div>
+        <div class="mac-download reveal">
+          <div class="mac-download-head">
+            <img src="assets/app-icon.png" alt="" width="72" height="72">
+            <div>
+              <p class="eyebrow">Website Commander for Mac</p>
+              <h2 id="download-title">Take command of the next release.</h2>
+              <p>The full command center: local clones, agent runs, visual diffs, previews, and deployment status — installed as Website Commander.</p>
+              <span class="version-badge">macOS 14+ · v1.0.9 · universal</span>
             </div>
-            <p>The full command center: local clones, agent runs, visual diffs, previews, and deployment status — installed as <strong>Website Commander</strong>.</p>
-            <div class="download-actions">
-              <a class="button button-primary" href="https://github.com/Mesutcydev/website-commander/releases/download/v1.0.8/WebsiteCommander-1.0.8.dmg">Download DMG · v1.0.8</a>
-              <a class="button button-secondary" href="https://github.com/Mesutcydev/website-commander/releases/latest" rel="noreferrer">All releases <span aria-hidden="true">↗</span></a>
-            </div>
-            <p class="microcopy">ZIP and SHA-256 checksums live with each release. Mirror: <a href="https://mesut.uk/WebsiteCommander-1.0.8.dmg">mesut.uk/WebsiteCommander-1.0.8.dmg</a></p>
-          </article>
-          <article class="download-card reveal">
-            <div class="download-card-head">
-              <img src="assets/app-icon.png" alt="" width="44" height="44">
-              <div>
-                <span class="card-label">MOBILE · iOS + iPadOS</span>
-                <h3>Sideloadable iPhone &amp; iPad build</h3>
-              </div>
-            </div>
-            <p>Keep the command center in reach: check site state, review staged edits, and deploy from iPhone or iPad.</p>
-            <div class="download-actions">
-              <a class="button button-primary" href="https://github.com/Mesutcydev/SiteAgentPage/releases/download/v2.0-build-2/WebsiteCommander-2.0-build-2.ipa">Download IPA · v2.0 build 2</a>
-              <a class="button button-secondary" href="https://github.com/Mesutcydev/SiteAgentPage/releases/tag/v2.0-build-2" rel="noreferrer">Release notes <span aria-hidden="true">↗</span></a>
-            </div>
-            <p class="microcopy">Sideload with AltStore, SideStore, or your own signing. SHA-256 checksums included in the release.</p>
-          </article>
+          </div>
+          <div class="download-actions">
+            <a class="button button-primary" href="https://github.com/Mesutcydev/website-commander/releases/download/v1.0.9/WebsiteCommander-1.0.9.dmg">Download DMG <span aria-hidden="true">↓</span></a>
+            <a class="button button-secondary" href="https://github.com/Mesutcydev/website-commander/releases/download/v1.0.9/WebsiteCommander-1.0.9.zip">ZIP (alternate)</a>
+            <a class="button button-secondary" href="https://github.com/Mesutcydev/website-commander/releases/latest" rel="noreferrer">Release notes <span aria-hidden="true">↗</span></a>
+          </div>
+          <p class="microcopy"><a href="https://github.com/Mesutcydev/website-commander/releases/download/v1.0.9/WebsiteCommander-1.0.9-SHA256SUMS.txt">SHA-256 checksums</a> ship with every release · ad-hoc signed, not notarized</p>
         </div>
       </div>
     </section>
 
-    <section class="section section-alt" id="faq" aria-labelledby="faq-title">
+    <section class="section section-alt" id="ios" aria-labelledby="ios-title">
+      <div class="shell ios-grid">
+        <div class="ios-copy reveal">
+          <p class="eyebrow">iPhone &amp; iPad companion</p>
+          <h2 id="ios-title">The deck in your pocket.</h2>
+          <p>Check the state of your sites, review staged edits, and deploy from the field — the same workspace, on iOS and iPadOS, in the same Clear Glass look.</p>
+          <ol class="sideload-steps">
+            <li><span>1</span> Download the IPA below</li>
+            <li><span>2</span> Sign it with AltStore, SideStore, or your own certificate</li>
+            <li><span>3</span> Install and connect your site</li>
+          </ol>
+          <div class="download-actions">
+            <a class="button button-primary" href="https://github.com/Mesutcydev/SiteAgentPage/releases/download/v2.0-build-3/WebsiteCommander-2.0-build-3.ipa">Download iOS build · v2.0 build 3</a>
+            <a class="button button-secondary" href="https://github.com/Mesutcydev/SiteAgentPage/releases/tag/v2.0-build-3" rel="noreferrer">Release notes <span aria-hidden="true">↗</span></a>
+          </div>
+          <p class="microcopy">Sideloadable IPA · iOS 16+ · SHA-256 checksums included in the release</p>
+        </div>
+        <div class="ios-stage reveal" aria-hidden="true">
+          <figure><img src="assets/screenshots/ios-sites.png" alt="Website Commander Sites Manager on iPhone with Clear Glass styling"></figure>
+          <figure><img src="assets/screenshots/ios-home.png" alt="Website Commander Command Center on iPhone with live deployment status"></figure>
+          <figure><img src="assets/screenshots/ios-chat.png" alt="Website Commander chat workspace on iPhone with starter tasks"></figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="faq" aria-labelledby="faq-title">
       <div class="shell shell-narrow">
         <div class="section-title reveal">
           <p class="eyebrow">Questions</p>
@@ -260,7 +248,7 @@
           </details>
           <details class="faq-item reveal">
             <summary>What kind of repositories work best?</summary>
-            <p>Any GitHub repository you can clone. Static sites and Jamstack projects work out of the box, with deployment integrations for GitHub Pages, Vercel, Netlify, and more.</p>
+            <p>Any GitHub repository you can clone. Static sites and Jamstack projects work out of the box, with deployment integrations for GitHub Pages, Vercel, Netlify, Cloudflare Workers, and more.</p>
           </details>
         </div>
       </div>

@@ -2,16 +2,16 @@
 
 @media (max-width: 900px) {
   .hero-grid,
-  .companion-grid { grid-template-columns: 1fr; }
+  .companion-grid,
+  .ios-grid { grid-template-columns: 1fr; }
 
   .workflow-grid { grid-template-columns: repeat(2, 1fr); }
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
   .metrics-grid { grid-template-columns: repeat(2, 1fr); gap: 1.3rem; }
   .gallery-grid { grid-template-columns: 1fr; }
-  .download-grid { grid-template-columns: 1fr; }
 
   .hero-stage { max-width: 540px; margin-inline: auto; }
-  .companion-stage { max-width: 480px; margin-inline: auto; }
+  .ios-stage { max-width: 520px; margin-inline: auto; }
 
   .menu-toggle { display: flex; }
   .site-nav {
@@ -48,6 +48,6 @@
   .download-card { padding: 1.5rem 1.3rem; }
   .button { width: 100%; }
   .hero-actions .button, .download-actions .button { width: auto; }
-  .companion-stage img:nth-child(2) { transform: translateY(8px); }
-  .companion-stage img:nth-child(3) { transform: translateY(16px); }
+  .ios-stage figure:nth-child(2) { transform: translateY(8px); }
+  .ios-stage figure:nth-child(3) { transform: translateY(16px); }
 }
