@@ -2,6 +2,8 @@ name: WebsiteCommander
 options:
   bundleIdPrefix: uk.mesut
   developmentLanguage: en
+  # Xcode 15-compatible project format so GitHub Actions (Xcode 15.4) can open it.
+  projectFormat: xcode15_0
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
