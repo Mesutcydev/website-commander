@@ -3,20 +3,73 @@ import Security
 
 /// A thin macOS Keychain wrapper for storing secrets (API keys, GitHub tokens).
 /// Values never touch UserDefaults or disk — only the Keychain.
+///
+/// All secrets live in ONE generic-password item ("vault") so macOS presents at
+/// most one authorization prompt per app signature — never one per credential.
+/// Ad-hoc development builds get a new code signature every build; with the old
+/// per-key layout that meant a prompt per saved key after every install.
 enum Keychain {
 
     private static let service = "uk.mesut.WebsiteCommander"
+    private static let vaultAccount = "credentials.vault"
     private static let lock = NSLock()
-    private static var cache: [String: String] = [:]
-    private static var cachePrimed = false
+    private static var vault: [String: String]?
+    private static var vaultAttempted = false
 
+    /// Warm the in-memory cache. Called once at startup so the first secret
+    /// read does not hit the Keychain mid-UI.
     static func prime() {
         lock.lock()
-        if cachePrimed {
-            lock.unlock()
-            return
-        }
+        if loadVaultLocked() == nil { migrateLegacyLocked() }
+        lock.unlock()
+    }
 
+    // MARK: - Vault (single keychain item)
+
+    private static func loadVaultLocked() -> [String: String]? {
+        if let vault { return vault }
+        if vaultAttempted { return nil }
+        vaultAttempted = true
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: vaultAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+           let data = item as? Data,
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+            vault = dict
+            return dict
+        }
+        return nil
+    }
+
+    private static func saveVaultLocked(_ values: [String: String]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: values) else { return }
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: vaultAccount
+        ]
+        SecItemDelete(base as CFDictionary)
+        var add = base
+        add[kSecValueData as String] = data
+        // Only readable while the Mac is unlocked; not exported in backups.
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+        if SecItemAdd(add as CFDictionary, nil) == errSecSuccess {
+            vault = values
+        }
+    }
+
+    // MARK: - One-time migration from the legacy per-key layout
+
+    /// Moves any legacy per-key items into the vault with a single bulk query,
+    /// then deletes them so future code signatures never re-prompt for them.
+    private static func migrateLegacyLocked() {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -25,79 +78,59 @@ enum Keychain {
             kSecMatchLimit as String: kSecMatchLimitAll
         ]
         var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecSuccess, let items = result as? [[String: Any]] {
-            for item in items {
-                guard let account = item[kSecAttrAccount as String] as? String,
-                      let data = item[kSecValueData as String] as? Data,
-                      let value = String(data: data, encoding: .utf8) else { continue }
-                cache[account] = value
-            }
-            cachePrimed = true
-        } else if status == errSecItemNotFound {
-            cachePrimed = true
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]], !items.isEmpty else { return }
+
+        var merged: [String: String] = [:]
+        var migratedKeys: [String] = []
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  account != vaultAccount,
+                  let data = item[kSecValueData as String] as? Data,
+                  let value = String(data: data, encoding: .utf8) else { continue }
+            merged[account] = value
+            migratedKeys.append(account)
         }
-        lock.unlock()
+        guard !merged.isEmpty else { return }
+        saveVaultLocked(merged)
+        for key in migratedKeys {
+            let deleteQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: key
+            ]
+            SecItemDelete(deleteQuery as CFDictionary)
+        }
     }
+
+    // MARK: - Public API (key/value facade over the vault)
 
     /// Store (or overwrite) a secret for `key`.
     static func set(_ value: String, for key: String) {
-        guard let data = value.data(using: .utf8) else { return }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key
-        ]
-        // Delete any existing item, then add fresh (simplest upsert).
-        SecItemDelete(query as CFDictionary)
-        var add = query
-        add[kSecValueData as String] = data
-        // Only readable while the Mac is unlocked; not exported in backups.
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-        let status = SecItemAdd(add as CFDictionary, nil)
-        if status == errSecSuccess {
-            lock.lock()
-            cache[key] = value
-            cachePrimed = true
+        lock.lock()
+        var values = loadVaultLocked() ?? [:]
+        if values[key] == value {
             lock.unlock()
+            return
         }
+        values[key] = value
+        saveVaultLocked(values)
+        lock.unlock()
     }
 
     /// Read a secret for `key`, or nil if absent.
     static func get(_ key: String) -> String? {
-        prime()
         lock.lock()
-        let cached = cache[key]
-        lock.unlock()
-        if let cached { return cached }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let value = String(data: data, encoding: .utf8) else { return nil }
-        lock.lock()
-        cache[key] = value
-        lock.unlock()
-        return value
+        defer { lock.unlock() }
+        return loadVaultLocked()?[key]
     }
 
     /// Delete a secret for `key`.
     static func delete(_ key: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key
-        ]
-        SecItemDelete(query as CFDictionary)
         lock.lock()
-        cache.removeValue(forKey: key)
+        var values = loadVaultLocked() ?? [:]
+        values.removeValue(forKey: key)
+        saveVaultLocked(values)
         lock.unlock()
     }
 
