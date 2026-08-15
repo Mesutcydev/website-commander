@@ -15,6 +15,7 @@ struct SitesManagerView: View {
     @State private var pendingDelete: SiteWorkspace? = nil
     @State private var showSettings = false
     @State private var deploymentSettingsRoute: DeploymentSettingsRoute?
+    @State private var deploymentSettingsPresented = false
 
     // Additive deploy telemetry for the Repository Health card. Loaded lazily and
     // guarded so it never blocks the UI; empty/unavailable falls back to "—".
@@ -53,11 +54,14 @@ struct SitesManagerView: View {
                     addNewWebsiteCard
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 0)
+                .padding(.top, 2)
                 .padding(.bottom, AppSize.scrollContentBottomSpacing)
                 .readableWidth()
             }
             .commandBackground()
+            // iOS 26 Liquid Glass renders the hidden-nav-bar shell edge-to-edge;
+            // keep the first card below the status bar so nothing overlaps it.
+            .safeAreaPadding(.top, 10)
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)
@@ -136,12 +140,19 @@ struct SitesManagerView: View {
             .sheet(isPresented: $showPaywall) {
                 ProPaywall()
             }
-            .navigationDestination(item: $deploymentSettingsRoute) { route in
-                DeploymentSettingsView(
-                    engine: engine,
-                    workspaceID: route.workspaceID,
-                    simpleMode: true
-                )
+            // isPresented-based push: the deprecated item-based variant can crash
+            // on current iOS when set from a button inside a presented sheet.
+            .navigationDestination(isPresented: $deploymentSettingsPresented) {
+                if let route = deploymentSettingsRoute {
+                    DeploymentSettingsView(
+                        engine: engine,
+                        workspaceID: route.workspaceID,
+                        simpleMode: true
+                    )
+                }
+            }
+            .onChange(of: deploymentSettingsPresented) { _, presented in
+                if !presented { deploymentSettingsRoute = nil }
             }
             .onChange(of: engine.requestedDeploymentSettings) { _, requested in
                 guard requested else { return }
@@ -235,7 +246,7 @@ struct SitesManagerView: View {
         let liveURL = ws.configuredLiveURL
         let lastEdited = lastDeployDateText
 
-        return VStack(alignment: .leading, spacing: 16) {
+        return VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 14) {
                 siteHeroAvatar(systemImage: iconForStack(ws.techStack))
                 VStack(alignment: .leading, spacing: 6) {
@@ -284,6 +295,7 @@ struct SitesManagerView: View {
             }
 
             Divider().overlay(CC.stroke)
+                .padding(.vertical, 2)
 
             HStack(alignment: .center, spacing: 16) {
                 if let lastEdited {
@@ -818,6 +830,7 @@ struct SitesManagerView: View {
             return
         }
         deploymentSettingsRoute = DeploymentSettingsRoute(workspaceID: workspaceID)
+        deploymentSettingsPresented = true
     }
 
     /// Best-effort production URL for the preview thumbnail. Workers deployments

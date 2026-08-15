@@ -213,6 +213,7 @@ struct SettingsView: View {
     @State private var pendingDelete: SiteWorkspace? = nil
     @State private var showAssistantEditor = false
     @State private var deploymentSettingsRoute: DeploymentSettingsRoute?
+    @State private var deploymentSettingsPresented = false
     @State private var showRepositoryEditor = false
 
     /// Yearly-vs-monthly saving, for the "switch to yearly" upsell. nil until
@@ -289,12 +290,19 @@ struct SettingsView: View {
             .sheet(item: $editingWorkspace) { ws in AddWorkspaceSheet(editingWorkspace: ws).environmentObject(engine) }
             .sheet(isPresented: $showGitHubHelp) { GitHubHelpView() }
             .sheet(isPresented: $showAssistantEditor) { assistantEditorSheet }
-            .navigationDestination(item: $deploymentSettingsRoute) { route in
-                DeploymentSettingsView(
-                    engine: engine,
-                    workspaceID: route.workspaceID,
-                    simpleMode: true
-                )
+            // isPresented-based push: the deprecated item-based variant can crash
+            // on current iOS when set from a button inside a presented sheet.
+            .navigationDestination(isPresented: $deploymentSettingsPresented) {
+                if let route = deploymentSettingsRoute {
+                    DeploymentSettingsView(
+                        engine: engine,
+                        workspaceID: route.workspaceID,
+                        simpleMode: true
+                    )
+                }
+            }
+            .onChange(of: deploymentSettingsPresented) { _, presented in
+                if !presented { deploymentSettingsRoute = nil }
             }
             .sheet(isPresented: $showRepositoryEditor) { repositoryEditorSheet }
             .confirmationDialog("Delete “\(pendingDelete?.name ?? "")”?",
@@ -451,6 +459,7 @@ struct SettingsView: View {
             return
         }
         deploymentSettingsRoute = DeploymentSettingsRoute(workspaceID: workspaceID)
+        deploymentSettingsPresented = true
     }
 
     // MARK: - Workspace switcher (multi-site)

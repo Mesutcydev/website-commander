@@ -69,9 +69,9 @@ enum AppSize {
     static let deploymentCardMinHeight: CGFloat = 132
     static let recentActivityMinHeight: CGFloat = 130
 
-    /// Visual breathing room after the final scroll item. The native `TabView`
-    /// owns the actual tab-bar and safe-area reservation.
-    static let scrollContentBottomSpacing: CGFloat = 16
+    /// Visual breathing room after the final scroll item so content clears the
+    /// floating Liquid Glass tab bar instead of sliding underneath it.
+    static let scrollContentBottomSpacing: CGFloat = 104
 }
 
 // MARK: - Reusable compact pieces
