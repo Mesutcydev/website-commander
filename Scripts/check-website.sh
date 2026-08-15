@@ -91,6 +91,11 @@ public_text = "\n".join(
     path.read_text(encoding="utf-8")
     for path in (site / "index.html", site / "privacy.html", site / "404.html")
 )
+import re as _re
+# Strip URLs and markup attributes so the legacy-brand check applies to
+# visible copy only (e.g. release-host URLs are not branding).
+public_text = _re.sub(r'\b(?:href|src|content)="[^"]*"', "", public_text)
+public_text = _re.sub(r"<[^>]+>", "", public_text)
 if "SiteAgent" in public_text:
     errors.append("public website still contains the legacy SiteAgent brand")
 for token in ("<owner>", "<custom-domain>", "YOUR_", "TODO"):

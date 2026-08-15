@@ -1,3 +1,6 @@
+// Website Commander — progressive enhancement.
+// The page is fully readable without JavaScript; this only adds
+// the mobile navigation behaviour and entrance animations.
 document.documentElement.classList.add('js');
 
 const menuButton = document.querySelector('.menu-toggle');
@@ -14,29 +17,11 @@ if (menuButton && navigation) {
     menuButton.setAttribute('aria-expanded', String(open));
   });
 
-  navigation.querySelectorAll('a').forEach((link) => link.addEventListener('click', closeMenu));
-  document.addEventListener('click', (event) => {
-    if (!navigation.contains(event.target) && !menuButton.contains(event.target)) closeMenu();
+  navigation.addEventListener('click', (event) => {
+    if (event.target.closest('a')) closeMenu();
   });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      closeMenu();
-      menuButton.focus();
-    }
-  });
-}
 
-const revealItems = document.querySelectorAll('.reveal');
-if ('IntersectionObserver' in window && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-  const observer = new IntersectionObserver((entries, currentObserver) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('is-visible');
-        currentObserver.unobserve(entry.target);
-      }
-    });
-  }, { threshold: 0.12 });
-  revealItems.forEach((item) => observer.observe(item));
-} else {
-  revealItems.forEach((item) => item.classList.add('is-visible'));
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeMenu();
+  });
 }

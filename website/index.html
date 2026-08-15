@@ -3,17 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#071013">
-  <meta name="description" content="Website Commander is a native Mac command center with an iPhone and iPad companion for editing, reviewing, and deploying sites from GitHub.">
-  <meta property="og:title" content="Website Commander — ship better websites">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="Website Commander is a native Mac command center with an iPhone and iPad companion for editing, reviewing, and deploying sites from GitHub. Every change is staged until you approve it.">
+  <meta name="author" content="Mesut Yagci">
+  <meta property="og:title" content="Website Commander — take command of your websites">
   <meta property="og:description" content="Describe a change. Review the diff. Approve the commit. Website Commander keeps website work close to the code and under your control.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://mesutcydev.github.io/website-commander/">
-  <meta property="og:image" content="assets/app-icon.png">
-  <link rel="canonical" href="https://mesutcydev.github.io/website-commander/">
+  <meta property="og:image" content="https://mesutcydev.github.io/website-commander/assets/app-icon.png">
+  <meta property="og:site_name" content="Website Commander">
   <meta name="twitter:card" content="summary_large_image">
-  <title>Website Commander — ship better websites</title>
+  <link rel="canonical" href="https://mesutcydev.github.io/website-commander/">
+  <title>Website Commander — take command of your websites</title>
   <link rel="icon" href="assets/app-icon.png" type="image/png">
+  <link rel="apple-touch-icon" href="assets/app-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap">
   <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/base.css">
   <link rel="stylesheet" href="css/components.css">
@@ -22,218 +29,260 @@
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to content</a>
-  <div class="site-shell">
-    <header class="site-header">
+
+  <header class="site-header">
+    <div class="shell header-inner">
       <a class="brand" href="./" aria-label="Website Commander home">
-        <img src="assets/app-icon.png" alt="" width="42" height="42">
-        <span>Website Commander</span>
+        <img src="assets/app-icon.png" alt="" width="34" height="34">
+        <span class="brand-name">Website Commander</span>
       </a>
-      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
-        <span class="sr-only">Open navigation</span>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open navigation">
         <span aria-hidden="true"></span><span aria-hidden="true"></span>
       </button>
       <nav id="site-nav" class="site-nav" aria-label="Primary navigation">
+        <a href="#overview">Overview</a>
         <a href="#workflow">Workflow</a>
-        <a href="#proof">Product</a>
-        <a href="#privacy">Privacy</a>
-        <a href="https://mesut.uk/apps/website-commander">Portfolio</a>
-        <a href="https://github.com/Mesutcydev/website-commander" rel="noreferrer">GitHub</a>
-        <a class="button button-small button-solid" href="#download">Get the app</a>
+        <a href="#screens">Screens</a>
+        <a href="#features">Features</a>
+        <a href="#download">Download</a>
+        <a class="button button-primary button-sm" href="#download">Get the app</a>
       </nav>
-    </header>
+    </div>
+  </header>
 
-    <main id="main-content">
-      <section class="hero section-grid" aria-labelledby="hero-title">
-        <div class="hero-rail hero-rail-left" aria-hidden="true"><span>WC / 01</span><i></i><b>COMMAND</b></div>
-        <div class="hero-rail hero-rail-right" aria-hidden="true"><span>LIVE / 24</span><i></i><b>APPROVAL REQUIRED</b></div>
+  <main id="main-content">
+    <section class="hero" id="overview" aria-labelledby="hero-title">
+      <div class="shell hero-grid">
         <div class="hero-copy reveal">
-          <p class="eyebrow"><span class="status-dot"></span> Mac command center · iPhone + iPad companion</p>
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Mac command center · iPhone + iPad companion</p>
           <h1 id="hero-title">Put your website on the <em>command deck.</em></h1>
-          <p class="hero-lede">Website Commander turns a plain-English request into a visible, reviewable change. Connect a GitHub repo, inspect the result, and ship only what you approve.</p>
+          <p class="lede">Describe a change in plain English. Review the diff. Approve the commit. Website Commander keeps every edit staged until you say ship — your keys stay in Keychain, and nothing goes live without you.</p>
           <div class="hero-actions">
-            <a class="button button-solid" href="#download">Choose your build <span aria-hidden="true">↗</span></a>
-            <a class="button button-quiet" href="#workflow">See the workflow <span aria-hidden="true">↓</span></a>
+            <a class="button button-primary" href="#download">Download for Mac <span aria-hidden="true">↓</span></a>
+            <a class="button button-secondary" href="#workflow">See the workflow</a>
           </div>
           <dl class="hero-facts" aria-label="Product facts">
             <div><dt>Desktop</dt><dd>macOS 14+</dd></div>
             <div><dt>Companion</dt><dd>iOS + iPadOS</dd></div>
             <div><dt>Boundary</dt><dd>Staged first</dd></div>
+            <div><dt>Credentials</dt><dd>Keychain</dd></div>
           </dl>
         </div>
-
-        <div class="hero-stage reveal reveal-delay-1" aria-label="Website Commander command center preview">
-          <div class="stage-orbit stage-orbit-one" aria-hidden="true"></div>
-          <div class="stage-orbit stage-orbit-two" aria-hidden="true"></div>
-          <div class="app-window">
-            <div class="window-bar">
-              <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-              <span class="window-path">website-commander / command center</span>
-              <span class="window-signal"><span class="status-dot"></span> connected</span>
-            </div>
-            <div class="window-body">
-              <div class="window-sidebar" aria-hidden="true">
-                <span class="sidebar-mark">WC</span>
-                <span class="sidebar-line active"></span><span class="sidebar-line"></span><span class="sidebar-line"></span><span class="sidebar-line short"></span>
-              </div>
-              <div class="window-content">
-                <div class="window-heading"><span>Command Center</span><span class="window-avatar">MC</span></div>
-                <div class="preview-site-card">
-                  <div><span class="mini-label">ACTIVE SITE</span><strong>Mesut UK</strong><small>cesur2000 / website</small></div>
-                  <span class="live-chip"><span class="status-dot"></span> Live</span>
-                </div>
-                <div class="metric-row">
-                  <div><span>Connected sites</span><strong>01</strong><small>All systems operational</small></div>
-                  <div><span>Changes staged</span><strong>03</strong><small>Ready for review</small></div>
-                </div>
-                <div class="diff-preview">
-                  <div class="diff-top"><span class="mini-label">PENDING CHANGE</span><span class="risk-chip">Low risk</span></div>
-                  <code><b class="minus">−</b> &lt;h1&gt;Welcome to my site&lt;/h1&gt;<br><b class="plus">+</b> &lt;h1&gt;Build what matters&lt;/h1&gt;</code>
-                  <div class="diff-footer"><span>index.html</span><span>Review diff&nbsp; →</span></div>
-                </div>
-              </div>
-            </div>
+        <div class="hero-stage reveal" aria-hidden="true">
+          <div class="stage-window">
+            <div class="stage-bar"><span></span><span></span><span></span><i>command center</i></div>
+            <img src="assets/screenshots/command-center.png" alt="">
           </div>
-          <div class="floating-note floating-note-top"><span class="note-icon">⌁</span><span><b>Approval gate</b><small>Nothing commits unseen</small></span></div>
-          <div class="floating-note floating-note-bottom"><span class="note-icon note-icon-green">✓</span><span><b>Deploy verified</b><small>Cloudflare Pages · live</small></span></div>
+          <div class="stage-note">
+            <span class="status-dot" aria-hidden="true"></span>
+            <code>diff staged · awaiting approval</code>
+          </div>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="signal-strip" aria-label="Workflow promise">
-        <p>From request to release, every step stays visible.</p>
-        <span class="strip-rule" aria-hidden="true"></span>
-        <p class="strip-mono">READ · STAGE · REVIEW · SHIP</p>
-      </section>
+    <section class="metrics glass" aria-label="Website Commander highlights">
+      <div class="shell metrics-grid">
+        <div class="metric reveal"><strong>Staged</strong><span>every change, until you approve</span></div>
+        <div class="metric reveal"><strong>Visual</strong><span>side-by-side diff before commit</span></div>
+        <div class="metric reveal"><strong>Direct</strong><span>provider connections, no middleman</span></div>
+        <div class="metric reveal"><strong>Local</strong><span>credentials live in your Keychain</span></div>
+      </div>
+    </section>
 
-      <section id="workflow" class="workflow section-block" aria-labelledby="workflow-title">
-        <div class="section-intro reveal">
-          <p class="eyebrow">A safer loop</p>
-          <h2 id="workflow-title">Make the change. <span>Keep the say.</span></h2>
-          <p>The agent handles the repetitive work while the commit boundary stays yours.</p>
+    <section class="section" id="workflow" aria-labelledby="workflow-title">
+      <div class="shell">
+        <div class="section-title reveal">
+          <p class="eyebrow">The loop</p>
+          <h2 id="workflow-title">From plain English to production, safely.</h2>
+          <p>Website Commander turns website work into a reviewable pipeline. Nothing is committed or deployed until you explicitly approve it.</p>
         </div>
-        <ol class="workflow-list">
+        <ol class="workflow-grid">
           <li class="workflow-step reveal">
-            <span class="step-number">01</span>
-            <div><h3>Connect the repo</h3><p>Choose a GitHub project and let Website Commander map the stack, branch, and deployment path.</p></div>
-            <span class="step-mark" aria-hidden="true">↘</span>
+            <span class="step-index" aria-hidden="true">01</span>
+            <h3>Describe the change</h3>
+            <p>Tell the agent what you want in plain English — new section, new page, copy, layout, a fix.</p>
           </li>
-          <li class="workflow-step reveal reveal-delay-1">
-            <span class="step-number">02</span>
-            <div><h3>Ask in plain English</h3><p>Describe the outcome, from a new landing section to an SEO pass or a stubborn layout bug.</p></div>
-            <span class="step-mark" aria-hidden="true">⌁</span>
+          <li class="workflow-step reveal">
+            <span class="step-index" aria-hidden="true">02</span>
+            <h3>Review the diff</h3>
+            <p>See exactly which files change, side by side, before anything is written back to your repository.</p>
           </li>
-          <li class="workflow-step reveal reveal-delay-2">
-            <span class="step-number">03</span>
-            <div><h3>Review the diff</h3><p>See staged file edits, risk signals, and a live preview before anything reaches your branch.</p></div>
-            <span class="step-mark" aria-hidden="true">≠</span>
+          <li class="workflow-step reveal">
+            <span class="step-index" aria-hidden="true">03</span>
+            <h3>Approve the commit</h3>
+            <p>Accept, edit, or reject. Only the changes you approve get committed — staged first, always.</p>
           </li>
-          <li class="workflow-step reveal reveal-delay-3">
-            <span class="step-number">04</span>
-            <div><h3>Approve and ship</h3><p>Commit when it is right, watch deployment status, and undo the last change when plans change.</p></div>
-            <span class="step-mark" aria-hidden="true">✓</span>
+          <li class="workflow-step reveal">
+            <span class="step-index" aria-hidden="true">04</span>
+            <h3>Deploy and watch</h3>
+            <p>Ship to your provider and follow the deployment status in chat until your change is live.</p>
           </li>
         </ol>
-      </section>
+      </div>
+    </section>
 
-      <section id="proof" class="proof section-block section-grid" aria-labelledby="proof-title">
-        <div class="proof-visual reveal">
-          <div class="proof-label"><span class="status-dot"></span> The artifact is the interface</div>
-          <div class="proof-panel">
-            <div class="proof-panel-top"><span>staged / index.html</span><span>3 files</span></div>
-            <div class="code-lines" aria-label="Example staged code change">
-              <span><i>01</i> &lt;section class=<b>"hero"</b>&gt;</span>
-              <span class="removed"><i>02</i> − &lt;h1&gt;Welcome to my site&lt;/h1&gt;</span>
-              <span class="added"><i>03</i> + &lt;h1&gt;Build what matters&lt;/h1&gt;</span>
-              <span><i>04</i> &nbsp;&nbsp;&lt;p&gt;A clearer first step for every visitor.&lt;/p&gt;</span>
-              <span><i>05</i> &lt;/section&gt;</span>
-            </div>
-            <div class="proof-panel-bottom"><span class="risk-chip">No secrets detected</span><span>Open visual diff&nbsp; ↗</span></div>
-          </div>
-          <div class="proof-ruler" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
-        </div>
-        <div class="proof-copy reveal reveal-delay-1">
-          <p class="eyebrow">See the work, not just the words</p>
-          <h2>AI proposes. <em>You approve.</em></h2>
-          <p>Website Commander treats every repository as real working material. Reads are free to explore. Writes are staged. Commits are an explicit decision.</p>
-          <ul class="check-list">
-            <li><span>✓</span> Side-by-side diffs before commit</li>
-            <li><span>✓</span> Live preview across device sizes</li>
-            <li><span>✓</span> Prompt-injection and risk scanning</li>
-            <li><span>✓</span> Deployment notes after the push</li>
-          </ul>
-          <a class="text-link" href="#privacy">Read the privacy model <span aria-hidden="true">→</span></a>
-        </div>
-      </section>
-
-      <section class="capabilities section-block" aria-labelledby="capabilities-title">
-        <div class="section-intro section-intro-wide reveal">
-          <p class="eyebrow">Built for the whole loop</p>
-          <h2 id="capabilities-title">The tools around the edit.</h2>
-          <p>Not another chat window. A focused operating layer for sites, code, previews, providers, and releases.</p>
-        </div>
-        <div class="capability-grid">
-          <article class="capability capability-large reveal"><span class="capability-index">01 / AGENT</span><h3>Natural-language website editing</h3><p>Give the outcome. The agent reads the relevant files, proposes focused edits, and stages them for your review.</p><span class="capability-glyph" aria-hidden="true">⌘</span></article>
-          <article class="capability reveal reveal-delay-1"><span class="capability-index">02 / PREVIEW</span><h3>Live visual feedback</h3><p>Render the staged site in mobile, tablet, or desktop views before it leaves the workspace.</p></article>
-          <article class="capability reveal reveal-delay-2"><span class="capability-index">03 / PROVIDERS</span><h3>Your models, your choice</h3><p>Use OpenAI, Anthropic, Gemini, DeepSeek, Grok, Mistral, Copilot, or a compatible endpoint.</p></article>
-          <article class="capability reveal"><span class="capability-index">04 / LOCAL</span><h3>Git and VS Code native</h3><p>Workspaces are local clones. Open the project in VS Code and let changes flow back into the agent.</p></article>
-          <article class="capability capability-wide reveal reveal-delay-1"><span class="capability-index">05 / OPERATIONS</span><h3>From branch to deployment</h3><p>Track Cloudflare Pages, Vercel, Netlify, and other supported deployment paths without losing the thread of what changed.</p><span class="capability-line" aria-hidden="true"></span></article>
-          <article class="capability reveal reveal-delay-2"><span class="capability-index">06 / CLI</span><h3>Headless when you need it</h3><p>The <code>wc</code> CLI shares the app’s settings and Keychain for agent-friendly workflows.</p></article>
-        </div>
-      </section>
-
-      <section class="gallery section-block" aria-labelledby="gallery-title">
-        <div class="section-intro reveal">
-          <p class="eyebrow">One system, different surfaces</p>
-          <h2 id="gallery-title">See the work from every angle.</h2>
-          <p>The Mac app is the command center. iPhone and iPad keep the state of your sites close when you are away from the desk.</p>
+    <section class="section section-alt" id="screens" aria-labelledby="screens-title">
+      <div class="shell">
+        <div class="section-title reveal">
+          <p class="eyebrow">The command deck</p>
+          <h2 id="screens-title">One calm surface for the whole loop.</h2>
+          <p>Workspace, agent feed, and diff review stay in one window — no tab juggling between editor, terminal, and browser.</p>
         </div>
         <div class="gallery-grid">
-          <article class="gallery-card product-panel gallery-card-tall reveal">
-            <div class="product-panel-head"><span>MAC / COMMAND CENTER</span><span class="panel-live">● connected</span></div>
-            <div class="workspace-ui"><div class="workspace-sidebar"><b>WC</b><i></i><i class="active"></i><i></i><i></i></div><div class="workspace-main"><div class="workspace-title"><strong>Command Center</strong><span>MC</span></div><div class="workspace-hero"><small>ACTIVE SITE</small><strong>Mesut UK</strong><em>cesur2000 / website</em><span class="panel-chip">● Live</span></div><div class="workspace-stats"><div><small>SITES</small><b>03</b></div><div><small>STAGED</small><b>01</b></div></div><div class="workspace-timeline"><small>DEPLOYMENT TIMELINE</small><span><i></i> Cloudflare Pages <b>Live</b></span><span><i></i> Vercel <b>Ready</b></span><span><i></i> GitHub Pages <b>Queued</b></span></div></div></div>
-            <div class="product-caption"><span>01</span><div><strong>Command Center</strong><small>Sites, branches, deployments</small></div></div>
-          </article>
-          <article class="gallery-card product-panel reveal reveal-delay-1">
-            <div class="product-panel-head"><span>AGENT / REVIEW</span><span class="panel-warning">● 1 pending</span></div>
-            <div class="review-ui"><div class="review-bar"><span>index.html</span><b>Review diff</b></div><div class="review-row removed"><i>−</i><span>Welcome to my site</span></div><div class="review-row added"><i>+</i><span>Build what matters</span></div><div class="review-approval"><span>Low risk · no secrets</span><b>Approve</b></div></div>
-            <div class="product-caption"><span>02</span><div><strong>Approval gate</strong><small>Every edit stays visible</small></div></div>
-          </article>
-          <article class="gallery-card product-panel reveal reveal-delay-2">
-            <div class="product-panel-head"><span>IPHONE + IPAD / FIELD VIEW</span><span class="panel-live">● synced</span></div>
-            <div class="field-ui"><div class="field-top"><span>Active site</span><b>Mesut UK⌄</b></div><div class="field-card"><span>CONNECTED SITES</span><strong>Everything operational</strong><i></i></div><div class="field-grid"><div><small>CHANGES</small><b>0</b><span>Up to date</span></div><div><small>PROVIDER</small><b>Copilot</b><span>Fast · private</span></div></div><div class="field-tabs"><b>Home</b><span>Sites</span><span>Chat</span><span>Preview</span></div></div>
-            <div class="product-caption"><span>03</span><div><strong>Field view</strong><small>Check status anywhere</small></div></div>
-          </article>
+          <figure class="gallery-card reveal">
+            <img src="assets/screenshots/command-center.png" alt="Website Commander workspace with live site preview beside the agent conversation">
+            <figcaption>Workspace + live preview</figcaption>
+          </figure>
+          <figure class="gallery-card reveal">
+            <img src="assets/screenshots/command-center-feed.png" alt="Website Commander agent feed showing tool activity and staged edits">
+            <figcaption>Agent feed, grouped by activity</figcaption>
+          </figure>
+          <figure class="gallery-card reveal">
+            <img src="assets/screenshots/command-center-detail.png" alt="Website Commander side-by-side diff review before commit">
+            <figcaption>Diff review before commit</figcaption>
+          </figure>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section id="privacy" class="privacy section-block section-grid" aria-labelledby="privacy-title">
-        <div class="privacy-copy reveal">
-          <p class="eyebrow">Private by design</p>
-          <h2 id="privacy-title">Your keys stay close. Your changes stay yours.</h2>
-          <p>Website Commander is built around direct connections and visible boundaries. Credentials live in the macOS Keychain. Provider calls go directly to the service you configure. Repository content is treated as untrusted input.</p>
-          <a class="text-link" href="privacy.html">Read the full privacy overview <span aria-hidden="true">→</span></a>
+    <section class="section" id="features" aria-labelledby="features-title">
+      <div class="shell">
+        <div class="section-title reveal">
+          <p class="eyebrow">Capabilities</p>
+          <h2 id="features-title">Built to keep you in control.</h2>
         </div>
-        <div class="privacy-list reveal reveal-delay-1">
-          <div><span class="privacy-icon">⌑</span><div><h3>Keychain storage</h3><p>Secrets are kept in the macOS Keychain and excluded from iCloud workspace sync.</p></div></div>
-          <div><span class="privacy-icon">↯</span><div><h3>Direct requests</h3><p>No proxy server sits between the app and your configured GitHub or AI provider.</p></div></div>
-          <div><span class="privacy-icon">✓</span><div><h3>Approval boundary</h3><p>Nothing is committed until you review and approve the staged change.</p></div></div>
+        <div class="feature-grid">
+          <article class="feature-card reveal">
+            <h3>Chat-to-edit agent</h3>
+            <p>Plain-English requests become real file changes, with every step shown as tool activity you can inspect.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Approval-first commits</h3>
+            <p>AI can make mistakes — Website Commander shows the diff, confirms the deploy, and keeps you in control.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>GitHub-native workspace</h3>
+            <p>Connect a repository once. Local clones, branches, and commits follow your GitHub workflow.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Preview &amp; inspector</h3>
+            <p>Render the site in place and inspect element, viewport, and user-agent behaviour without leaving the app.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Deploy integrations</h3>
+            <p>Ship to GitHub Pages, Vercel, Netlify, and more — then track build status in the conversation.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>iPhone &amp; iPad companion</h3>
+            <p>The same workspace in your pocket: check state, review changes, and deploy from the field.</p>
+          </article>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section id="download" class="download section-block reveal" aria-labelledby="download-title">
-        <div class="download-head"><div class="download-mark"><img src="assets/app-icon.png" alt="" width="74" height="74"></div><div class="download-copy"><p class="eyebrow">Choose your surface</p><h2 id="download-title">Take command of the next release.</h2><p>One workflow across the desk and the field. Pick the build that matches where you work.</p></div></div>
-        <div class="platform-grid">
-          <article class="platform-card"><span class="platform-label">DESKTOP / macOS 14+</span><h3>Website Commander for Mac</h3><p>The full command center for local clones, agent runs, visual diffs, previews, and deployment status.</p><a class="button button-solid" href="https://github.com/Mesutcydev/website-commander/releases" rel="noreferrer">Download Mac release <span aria-hidden="true">↗</span></a><small>DMG · ZIP · SHA256 checksums</small></article>
-          <article class="platform-card platform-card-ios"><span class="platform-label">MOBILE / iOS + iPadOS</span><h3>Sideloadable iPhone and iPad build</h3><p>Keep your website command center in reach. Download the current IPA from the published release page.</p><a class="button button-quiet" href="https://github.com/Mesutcydev/website-commander/releases" rel="noreferrer">Download sideloadable IPA <span aria-hidden="true">↗</span></a><small>Open Releases and choose the IPA asset for the current build.</small></article>
+    <section class="section section-alt" aria-labelledby="companion-title">
+      <div class="shell companion-grid">
+        <div class="companion-copy reveal">
+          <p class="eyebrow">On the move</p>
+          <h2 id="companion-title">The deck in your pocket.</h2>
+          <p>When you are away from the desk, the iPhone and iPad companion keeps the state of your sites close — review a staged diff, approve a commit, and watch the deployment land.</p>
+          <a class="button button-secondary" href="#download">Get the iOS build <span aria-hidden="true">↓</span></a>
         </div>
-        <div class="download-footer"><a class="text-link" href="https://github.com/Mesutcydev/website-commander" rel="noreferrer">View source and release notes on GitHub <span aria-hidden="true">→</span></a><span>Published binaries and checksums stay with each release.</span></div>
-      </section>
-    </main>
+        <div class="companion-stage reveal" aria-hidden="true">
+          <img src="assets/screenshots/ios-command-center.png" alt="">
+          <img src="assets/screenshots/ios-command-center-feed.png" alt="">
+          <img src="assets/screenshots/ios-command-center-detail.png" alt="">
+        </div>
+      </div>
+    </section>
 
-    <footer class="site-footer">
-      <div class="footer-brand"><a class="brand" href="./"><img src="assets/app-icon.png" alt="" width="34" height="34"><span>Website Commander</span></a><p>Native website operations, with a human at the commit boundary.</p></div>
-      <div class="footer-links"><a href="https://mesut.uk/apps/website-commander">Portfolio</a><a href="privacy.html">Privacy</a><a href="https://github.com/Mesutcydev/website-commander/security" rel="noreferrer">Security</a><a href="https://github.com/Mesutcydev/website-commander/blob/main/LICENSE" rel="noreferrer">MIT License</a><a href="https://github.com/Mesutcydev/website-commander" rel="noreferrer">GitHub</a></div>
-      <p class="footer-meta">© 2026 Website Commander · Built for the web, not around it.</p>
-    </footer>
-  </div>
+    <section class="section" id="download" aria-labelledby="download-title">
+      <div class="shell">
+        <div class="section-title reveal">
+          <p class="eyebrow">Choose your build</p>
+          <h2 id="download-title">Take command of the next release.</h2>
+          <p>One workflow across the desk and the field. Every published build ships with release notes and checksums.</p>
+        </div>
+        <div class="download-grid">
+          <article class="download-card reveal">
+            <div class="download-card-head">
+              <img src="assets/app-icon.png" alt="" width="44" height="44">
+              <div>
+                <span class="card-label">DESKTOP · macOS 14+</span>
+                <h3>Website Commander for Mac</h3>
+              </div>
+            </div>
+            <p>The full command center: local clones, agent runs, visual diffs, previews, and deployment status — installed as <strong>WebCom</strong>.</p>
+            <div class="download-actions">
+              <a class="button button-primary" href="https://github.com/Mesutcydev/website-commander/releases/download/v1.0.8/WebsiteCommander-1.0.8.dmg">Download DMG · v1.0.8</a>
+              <a class="button button-secondary" href="https://github.com/Mesutcydev/website-commander/releases/latest" rel="noreferrer">All releases <span aria-hidden="true">↗</span></a>
+            </div>
+            <p class="microcopy">ZIP and SHA-256 checksums live with each release. Mirror: <a href="https://mesut.uk/WebsiteCommander-1.0.8.dmg">mesut.uk/WebsiteCommander-1.0.8.dmg</a></p>
+          </article>
+          <article class="download-card reveal">
+            <div class="download-card-head">
+              <img src="assets/app-icon.png" alt="" width="44" height="44">
+              <div>
+                <span class="card-label">MOBILE · iOS + iPadOS</span>
+                <h3>Sideloadable iPhone &amp; iPad build</h3>
+              </div>
+            </div>
+            <p>Keep the command center in reach: check site state, review staged edits, and deploy from iPhone or iPad.</p>
+            <div class="download-actions">
+              <a class="button button-primary" href="https://github.com/Mesutcydev/SiteAgentPage/releases/download/v2.0-build-1/SiteAgent-2.0-build-1-navigation-fix.ipa">Download IPA · v2.0</a>
+              <a class="button button-secondary" href="https://github.com/Mesutcydev/SiteAgentPage/releases/latest" rel="noreferrer">Release notes <span aria-hidden="true">↗</span></a>
+            </div>
+            <p class="microcopy">Sideload with AltStore, SideStore, or your own signing. SHA-256 checksums included in the release.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt" id="faq" aria-labelledby="faq-title">
+      <div class="shell shell-narrow">
+        <div class="section-title reveal">
+          <p class="eyebrow">Questions</p>
+          <h2 id="faq-title">Before you connect a repo.</h2>
+        </div>
+        <div class="faq-list">
+          <details class="faq-item reveal" open>
+            <summary>Is anything committed without my approval?</summary>
+            <p>No. Every change is staged and shown as a side-by-side diff. Nothing is committed or deployed until you approve it.</p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>Where do my credentials live?</summary>
+            <p>GitHub tokens and provider keys are stored in the macOS or iOS Keychain — never in plain text, never written to the repository.</p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>Which AI providers can I connect?</summary>
+            <p>Website Commander connects directly to supported cloud providers with your own key, and can run compatible on-device models on supported hardware. Your requests go to the provider you configure — no extra middleman.</p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>What kind of repositories work best?</summary>
+            <p>Any GitHub repository you can clone. Static sites and Jamstack projects work out of the box, with deployment integrations for GitHub Pages, Vercel, Netlify, and more.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-inner">
+      <div class="footer-brand">
+        <img src="assets/app-icon.png" alt="" width="28" height="28">
+        <span>Website Commander</span>
+        <p>Describe it. Review it. Ship it.</p>
+      </div>
+      <nav class="footer-links" aria-label="Footer navigation">
+        <a href="https://mesut.uk/apps/website-commander" rel="noreferrer">Portfolio</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="https://github.com/Mesutcydev/website-commander" rel="noreferrer">GitHub</a>
+        <a href="https://github.com/Mesutcydev/website-commander/releases/latest" rel="noreferrer">Releases</a>
+        <a href="https://github.com/Mesutcydev/website-commander/blob/main/LICENSE" rel="noreferrer">MIT License</a>
+      </nav>
+      <p class="footer-fine">© 2026 Mesut Yagci · Installed as WebCom · macOS 14+ · iOS + iPadOS</p>
+    </div>
+  </footer>
 </body>
 </html>
