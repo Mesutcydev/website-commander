@@ -302,6 +302,47 @@ struct PendingChange: Identifiable, Equatable {
     }
 }
 
+// MARK: - Codable (id is regenerated on decode; not persisted)
+
+extension PendingChange: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case path, oldContent, content, oldBinary, message, isDeletion, risks
+        case baseSHA, workspaceID, importSessionID, importBaseCommitSHA
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // `id` is a per-session identity, not durable state; its default value
+        // regenerates a fresh UUID on every decode.
+        self.path = try c.decode(String.self, forKey: .path)
+        self.oldContent = try c.decodeIfPresent(String.self, forKey: .oldContent)
+        self.content = try c.decode(PendingChangeContent.self, forKey: .content)
+        self.oldBinary = try c.decodeIfPresent(BinaryPendingContent.self, forKey: .oldBinary)
+        self.message = try c.decode(String.self, forKey: .message)
+        self.isDeletion = try c.decodeIfPresent(Bool.self, forKey: .isDeletion) ?? false
+        self.risks = try c.decodeIfPresent([String].self, forKey: .risks) ?? []
+        self.baseSHA = try c.decodeIfPresent(String.self, forKey: .baseSHA)
+        self.workspaceID = try c.decodeIfPresent(UUID.self, forKey: .workspaceID)
+        self.importSessionID = try c.decodeIfPresent(UUID.self, forKey: .importSessionID)
+        self.importBaseCommitSHA = try c.decodeIfPresent(String.self, forKey: .importBaseCommitSHA)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(path, forKey: .path)
+        try c.encodeIfPresent(oldContent, forKey: .oldContent)
+        try c.encode(content, forKey: .content)
+        try c.encodeIfPresent(oldBinary, forKey: .oldBinary)
+        try c.encode(message, forKey: .message)
+        try c.encode(isDeletion, forKey: .isDeletion)
+        try c.encode(risks, forKey: .risks)
+        try c.encodeIfPresent(baseSHA, forKey: .baseSHA)
+        try c.encodeIfPresent(workspaceID, forKey: .workspaceID)
+        try c.encodeIfPresent(importSessionID, forKey: .importSessionID)
+        try c.encodeIfPresent(importBaseCommitSHA, forKey: .importBaseCommitSHA)
+    }
+}
+
 // MARK: - Commit history
 
 /// A commit row from the GitHub commits API.

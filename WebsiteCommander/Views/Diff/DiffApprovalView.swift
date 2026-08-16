@@ -526,6 +526,7 @@ struct DiffApprovalView: View {
                 dismiss()
             }
             .buttonStyle(.destructiveText)
+            .disabled(isCommitting || engine.isCommitting)
             Button {
                 guard !isCommitting else { return }
                 isCommitting = true

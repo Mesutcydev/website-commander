@@ -885,7 +885,7 @@ struct ChatView: View {
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
             if engine.queuedPromptCount > 0 {
-                Text("(engine.queuedPromptCount) queued")
+                Text("\(engine.queuedPromptCount) queued")
                     .font(Theme.ui(10.5, .medium))
                     .foregroundStyle(Theme.violet)
             }
@@ -912,8 +912,15 @@ struct ChatView: View {
                 .foregroundStyle(Theme.secondaryText)
                 .lineLimit(2)
             Spacer(minLength: Theme.Space.s)
-            if !engine.isRunActive && !engine.canContinue
-                && engine.pendingChanges.isEmpty {
+            if engine.isRunActive && engine.canSendQueuedPromptNow,
+               let first = engine.queuedPrompts.first {
+                Button("Send now") {
+                    engine.sendQueuedPromptNow(first.id)
+                }
+                .buttonStyle(.primarySoftCompact)
+                .help("Stop the current turn and run the first queued prompt immediately")
+            } else if !engine.isRunActive && !engine.canContinue
+                        && engine.pendingChanges.isEmpty {
                 Button("Run queued") {
                     engine.resumeQueuedPrompts()
                 }
@@ -1637,6 +1644,18 @@ struct MessageBubble: View {
                 HStack(spacing: 5) {
                     Image(systemName: "clock")
                     Text("Queued")
+                    if engine.canSendQueuedPromptNow {
+                        Button {
+                            engine.sendQueuedPromptNow(message.id)
+                        } label: {
+                            Label("Send queued prompt now", systemImage: "arrow.up.circle.fill")
+                                .labelStyle(.iconOnly)
+                        }
+                        .buttonStyle(.plain)
+                        .help(engine.isRunActive
+                              ? "Stop the current turn and send this prompt now"
+                              : "Send this prompt now")
+                    }
                     Button {
                         engine.removeQueuedPrompt(message.id)
                     } label: {
@@ -1779,8 +1798,10 @@ struct PendingChangesBar: View {
             .frame(maxWidth: 360)
             Button("Decline All") { engine.discardAll() }
                 .buttonStyle(.destructiveText)
+                .disabled(engine.isCommitting)
             Button("Approve All") { Task { await engine.approveAll() } }
                 .buttonStyle(.primary)
+                .disabled(engine.isCommitting)
         }
         .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.m)

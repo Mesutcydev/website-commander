@@ -35,7 +35,14 @@ enum SecretRedactor {
              replacement: "$1***"),
         // generic assignment: api_key: "…", token = '…', secret: …
         Rule(pattern: "(\\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd|authorization)\\b\\s*[:=]\\s*[\"']?)[^\\s\"'&,;}]+",
-             replacement: "$1***")
+             replacement: "$1***"),
+        // JSON-style double-quoted keys: "apiKey": "…", "password": "…"
+        Rule(pattern: "(\"(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd|authorization)\"\\s*:\\s*\")[^\"]+",
+             replacement: "$1***"),
+        // GitHub OAuth tokens (gho_/ghu_/ghs_/ghr_)
+        Rule(pattern: "gh[ousr]_[A-Za-z0-9]{16,}", replacement: "gh***"),
+        // Bare JWTs (header.payload.signature)
+        Rule(pattern: "eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}", replacement: "eyJ***")
     ]
 
     private static let compiled: [(NSRegularExpression, String)] = rules.compactMap { rule in

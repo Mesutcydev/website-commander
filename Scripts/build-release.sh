@@ -64,7 +64,9 @@ if [ "${NOTARIZE:-0}" = "1" ]; then
     eval "val=\$$v"; [ -n "$val" ] || { echo "NOTARIZE=1 requires $v"; exit 1; }
   done
   echo "==> Notarizing (this can take a few minutes)"
-  xcrun notarytool submit "$APP" --apple-id "$APPLE_ID" --password "$APP_PASSWORD" \
+  # `env:APP_PASSWORD` keeps the password out of the process list (visible
+  # via `ps`) while notarytool reads it from the environment.
+  xcrun notarytool submit "$APP" --apple-id "$APPLE_ID" --password "env:APP_PASSWORD" \
     --team-id "$TEAM" --wait
   xcrun stapler staple "$APP"
 fi

@@ -155,6 +155,21 @@ struct TopBarModelPopover: View {
         ModelCatalog.pairedProviders(settings)
     }
 
+    /// The model the effort choice would apply to: explicit selection, else the
+    /// provider default (custom endpoints keep their typed model ID).
+    private var effortEligibleModel: String {
+        if settings.model.isEmpty {
+            return activeProviderID == "custom" ? settings.customModel
+                : (ProviderRegistry.info(for: activeProviderID)?.defaultModel ?? "")
+        }
+        return settings.model
+    }
+
+    private var showsEffortSection: Bool {
+        ReasoningEffortSupport.supports(providerID: activeProviderID,
+                                        model: effortEligibleModel)
+    }
+
     var body: some View {
         TopBarPopoverPanel {
             VStack(alignment: .leading, spacing: 2) {
@@ -204,6 +219,22 @@ struct TopBarModelPopover: View {
                                     isSelected: settings.model == model,
                                     action: {
                                         settings.model = model
+                                        onSelect()
+                                    }
+                                )
+                            }
+                        }
+
+                        if showsEffortSection {
+                            TopBarPopoverSeparator()
+                            TopBarPopoverSectionLabel(text: "Effort")
+                            ForEach(ReasoningEffort.allCases) { effort in
+                                TopBarPopoverRow(
+                                    title: effort.label,
+                                    subtitle: effort.summary,
+                                    isSelected: settings.reasoningEffort == effort,
+                                    action: {
+                                        settings.reasoningEffort = effort
                                         onSelect()
                                     }
                                 )

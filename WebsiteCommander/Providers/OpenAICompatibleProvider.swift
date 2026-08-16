@@ -14,6 +14,8 @@ struct OpenAICompatibleProvider: LLMProvider {
         var defaultModel: String
         var visionModels: Set<String> = []
         var extraHeaders: [String: String] = [:]
+        /// Effort for models with a `reasoning_effort` or thinking toggle.
+        var reasoningEffort: ReasoningEffort = .default
     }
 
     let config: Config
@@ -36,7 +38,7 @@ struct OpenAICompatibleProvider: LLMProvider {
             "model": model,
             "messages": messages.map { Self.messageJSON($0) }
         ]
-        Self.applyThinkingIfSupported(&body, model: model)
+        Self.applyThinkingIfSupported(&body, model: model, effort: config.reasoningEffort)
         if !tools.isEmpty {
             body["tools"] = tools.map { tool -> [String: Any] in
                 ["type": "function",
@@ -69,7 +71,7 @@ struct OpenAICompatibleProvider: LLMProvider {
             "stream_options": ["include_usage": true],
             "messages": messages.map { Self.messageJSON($0) }
         ]
-        Self.applyThinkingIfSupported(&body, model: model)
+        Self.applyThinkingIfSupported(&body, model: model, effort: config.reasoningEffort)
         if !tools.isEmpty {
             body["tools"] = tools.map { tool -> [String: Any] in
                 ["type": "function",
@@ -116,6 +118,12 @@ struct OpenAICompatibleProvider: LLMProvider {
             if payload == "[DONE]" { break }
             guard let data = payload.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            // A mid-stream error frame (rate limit, quota, content filter) must
+            // surface as a failure, not a confident "Done." with empty content.
+            if let errObj = obj["error"] as? [String: Any] {
+                let message = (errObj["message"] as? String) ?? "provider stream error"
+                throw LLMError.decoding("provider stream error: \(message)")
+            }
             if let u = obj["usage"] as? [String: Any] {
                 usage = TokenUsage(promptTokens: (u["prompt_tokens"] as? Int) ?? 0,
                                    completionTokens: (u["completion_tokens"] as? Int) ?? 0)
@@ -187,20 +195,25 @@ struct OpenAICompatibleProvider: LLMProvider {
 
     /// Request thinking / reasoning traces when the model is known to support them.
     /// DeepSeek V4 accepts `thinking: {type: enabled}`; unknown gateways ignore it.
-    static func applyThinkingIfSupported(_ body: inout [String: Any], model: String) {
-        guard ModelReasoningSupport.openAICompatible(model) else { return }
+    /// An explicit effort choice overrides the provider's default level; low on a
+    /// DeepSeek thinking model disables thinking entirely (its only two levels).
+    static func applyThinkingIfSupported(_ body: inout [String: Any], model: String,
+                                         effort: ReasoningEffort = .default) {
+        // Gate on the models the branches below actually act on (o-series,
+        // GPT-5, DeepSeek V4); other IDs get no thinking or effort keys.
+        guard ReasoningEffortSupport.openAICompatible(model) else { return }
         let m = model.lowercased()
-        // o-series uses reasoning_effort rather than DeepSeek's thinking toggle.
-        if m.hasPrefix("o1") || m.hasPrefix("o3") || m.hasPrefix("o4") {
+        // o-series / GPT-5 use reasoning_effort rather than DeepSeek's thinking toggle.
+        if m.hasPrefix("o1") || m.hasPrefix("o3") || m.hasPrefix("o4") || m.hasPrefix("gpt-5") {
             if body["reasoning_effort"] == nil {
-                body["reasoning_effort"] = "medium"
+                body["reasoning_effort"] = effort == .default ? "medium" : effort.rawValue
             }
             return
         }
         // DeepSeek V4 thinking mode. Other gateways often reject unknown keys,
         // so only send this for DeepSeek model IDs.
         if m.contains("deepseek"), body["thinking"] == nil {
-            body["thinking"] = ["type": "enabled"]
+            body["thinking"] = ["type": effort == .low ? "disabled" : "enabled"]
         }
     }
 

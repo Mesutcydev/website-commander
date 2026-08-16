@@ -11,6 +11,7 @@ struct ConversationsSheet: View {
     @State private var showAll = false
     @State private var renamingID: UUID?
     @State private var renameText = ""
+    @State private var pendingDelete: SavedConversation?
     @FocusState private var renameFocused: Bool
 
     private var rows: [SavedConversation] {
@@ -56,6 +57,30 @@ struct ConversationsSheet: View {
             .padding(Theme.Space.l)
         }
         .frame(width: 520, height: 520)
+        .confirmationDialog(
+            "Delete conversation?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { conv in
+            Button("Delete", role: .destructive) { delete(conv) }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: { conv in
+            Text("“\(conv.title)” and its \(conv.messages.count) message\(conv.messages.count == 1 ? "" : "s") will be permanently removed. This can't be undone.")
+        }
+    }
+
+    private func delete(_ conv: SavedConversation) {
+        conversations.delete(conv.id)
+        if engine.currentConversationID == conv.id {
+            // Clear the live transcript too, or the next autosave re-persists
+            // the deleted chat under a fresh id.
+            engine.clearCurrentConversation()
+        }
+        pendingDelete = nil
     }
 
     private func row(_ conv: SavedConversation) -> some View {
@@ -97,12 +122,12 @@ struct ConversationsSheet: View {
                 .help("Rename conversation")
             }
             Button(role: .destructive) {
-                conversations.delete(conv.id)
-                if engine.currentConversationID == conv.id { engine.currentConversationID = nil }
+                pendingDelete = conv
             } label: {
                 Image(systemName: "trash")
             }
             .buttonStyle(.icon)
+            .help("Delete conversation")
         }
         .padding(Theme.Space.s)
         .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.Radius.medium))

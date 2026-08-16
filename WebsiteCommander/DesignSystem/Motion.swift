@@ -97,7 +97,9 @@ final class AmbientMotionCoordinator: ObservableObject {
 
     private func startTimerIfNeeded() {
         guard timer == nil else { return }
-        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        // ~15 fps is enough for the slow ambient loops (2.4–9.4s periods) and
+        // halves the number of body re-evaluations versus a 30 fps clock.
+        let timer = Timer(timeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.isRunning else { return }
                 self.now = Date()

@@ -101,22 +101,24 @@ enum ProviderRegistry {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         switch id {
         case "anthropic":
-            return AnthropicProvider(apiKey: key)
+            return AnthropicProvider(apiKey: key, effort: settings.reasoningEffort)
         case "gemini":
-            return GeminiProvider(apiKey: key)
+            return GeminiProvider(apiKey: key, effort: settings.reasoningEffort)
         case "custom":
             guard !settings.customBaseURL.isEmpty else { return nil }
             let model = settings.customModel.isEmpty ? "gpt-4o" : settings.customModel
             return OpenAICompatibleProvider(config: .init(
                 id: "custom", displayName: "Custom", baseURL: settings.customBaseURL,
-                apiKey: key, models: [model], defaultModel: model, visionModels: [model]))
+                apiKey: key, models: [model], defaultModel: model, visionModels: [model],
+                reasoningEffort: settings.reasoningEffort))
         case "copilot":
             return OpenAICompatibleProvider(config: .init(
                 id: "copilot", displayName: "GitHub Copilot",
                 baseURL: "https://api.githubcopilot.com", apiKey: key,
                 models: ["gpt-4o", "claude-sonnet-4", "o3-mini"], defaultModel: "gpt-4o",
                 visionModels: ["gpt-4o"],
-                extraHeaders: ["Copilot-Integration-Id": "vscode-chat"]))
+                extraHeaders: ["Copilot-Integration-Id": "vscode-chat"],
+                reasoningEffort: settings.reasoningEffort))
         case "ondevice":
             #if canImport(FoundationModels)
             if #available(macOS 26.0, *), OnDeviceProvider.isAvailable {
@@ -149,7 +151,8 @@ enum ProviderRegistry {
             return OpenAICompatibleProvider(config: .init(
                 id: id, displayName: info.displayName, baseURL: baseURL, apiKey: key,
                 models: info.models, defaultModel: info.defaultModel,
-                visionModels: visionModels))
+                visionModels: visionModels,
+                reasoningEffort: settings.reasoningEffort))
         }
     }
 
@@ -172,7 +175,11 @@ enum ProviderRegistry {
             order = ["opencode-zen", "opencode-go", "alibaba-token",
                      "copilot", "anthropic", "openai", "gemini", "deepseek"]
         }
-        let available = order.filter { !(settings.apiKey(for: $0) ?? "").isEmpty }
+        // Use the in-memory `pairedProviderIDs` set (populated off-main by
+        // SettingsStore) instead of synchronous Keychain reads: this is called
+        // from a view body during layout, where a Keychain prompt can deadlock
+        // the main thread.
+        let available = order.filter { settings.pairedProviderIDs.contains($0) }
         return available.first ?? settings.providerID
     }
 }

@@ -6,6 +6,16 @@ import Foundation
 struct AnthropicProvider: LLMProvider {
 
     let apiKey: String
+    /// Thinking-budget level. The API only exposes a token budget, so effort
+    /// levels map onto (budget, max_tokens) pairs that always keep the budget
+    /// strictly below max_tokens.
+    let effort: ReasoningEffort
+
+    init(apiKey: String, effort: ReasoningEffort = .default) {
+        self.apiKey = apiKey
+        self.effort = effort
+    }
+
     var id: String { "anthropic" }
     var displayName: String { "Claude" }
     var models: [String] {
@@ -17,7 +27,7 @@ struct AnthropicProvider: LLMProvider {
         .vision(reasoning: ModelReasoningSupport.anthropic(model))
     }
 
-    private func requestBody(messages: [LLMMessage], tools: [ToolSpec], model: String) throws -> [String: Any] {
+    func requestBody(messages: [LLMMessage], tools: [ToolSpec], model: String) throws -> [String: Any] {
         guard !apiKey.isEmpty else { throw LLMError.noKey(displayName) }
 
         var system = ""
@@ -95,15 +105,22 @@ struct AnthropicProvider: LLMProvider {
         flushToolResults()
 
         let thinkingEnabled = ModelReasoningSupport.anthropic(model)
-        // Thinking budget must be less than max_tokens.
-        let maxTokens = thinkingEnabled ? 16_000 : 8192
+        // Thinking budget must be less than max_tokens; each effort level pairs
+        // its budget with headroom for the visible answer above it.
+        let budgetTokens: Int
+        let maxTokens: Int
+        switch effort {
+        case .default, .medium: budgetTokens = 8_000;  maxTokens = 16_000
+        case .low:              budgetTokens = 2_048;  maxTokens = 8_192
+        case .high:             budgetTokens = 16_000; maxTokens = 24_000
+        }
         var body: [String: Any] = [
             "model": model,
-            "max_tokens": maxTokens,
+            "max_tokens": thinkingEnabled ? maxTokens : 8192,
             "messages": anthropicMessages
         ]
         if thinkingEnabled {
-            body["thinking"] = ["type": "enabled", "budget_tokens": 8_000]
+            body["thinking"] = ["type": "enabled", "budget_tokens": budgetTokens]
         }
         if !system.isEmpty { body["system"] = system }
         if !tools.isEmpty {
@@ -221,6 +238,10 @@ struct AnthropicProvider: LLMProvider {
                 if let u = obj["usage"] as? [String: Any] {
                     usage.completionTokens = (u["output_tokens"] as? Int) ?? usage.completionTokens
                 }
+            case "error":
+                let message = (obj["error"] as? [String: Any])?["message"] as? String
+                    ?? "Anthropic stream error"
+                throw LLMError.decoding("Anthropic stream error: \(message)")
             default:
                 break
             }

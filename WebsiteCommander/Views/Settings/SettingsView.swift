@@ -3,14 +3,16 @@ import AppKit
 
 // MARK: - Window metrics
 
-/// One place owns the Settings window's geometry. The width is fixed — a
-/// preferences window is a form, not a canvas — and the height follows the
-/// selected page between a floor (so a short page still looks like a window)
-/// and a ceiling (past which the page scrolls instead of growing).
+/// One place owns the Settings window's geometry. Both the width and the
+/// page height are fixed: a preferences window is a form, not a canvas, and
+/// an even page size means switching tabs never resizes the window under the
+/// user's pointer. Pages whose content exceeds the fixed height scroll.
 enum SettingsMetrics {
     static let width: CGFloat = 620
-    static let minPageHeight: CGFloat = 300
-    static let maxPageHeight: CGFloat = 620
+    /// Every page is exactly this tall, so tab-to-tab the window chrome stays
+    /// put. Chosen to fit the largest page (Provider) without scrolling on a
+    /// first run, and to leave short pages (About) breathing room.
+    static let pageHeight: CGFloat = 560
     static let tabItemWidth: CGFloat = 84
     static let pageInsets = EdgeInsets(top: Theme.Space.l, leading: Theme.Space.xl,
                                        bottom: Theme.Space.xl, trailing: Theme.Space.xl)
@@ -76,6 +78,13 @@ struct SettingsView: View {
         .environmentObject(updater)
         .environmentObject(bridge)
         .environmentObject(cloudSync)
+        .task {
+            // Opening Settings is a user-initiated moment; refreshing the
+            // readiness metadata here (rather than at launch) keeps the launch
+            // path free of Keychain access-control prompts.
+            settings.refreshPairedProviders()
+            settings.refreshReadiness()
+        }
     }
 
     @ViewBuilder private var page: some View {
@@ -169,13 +178,13 @@ private struct SettingsTabButtonStyle: ButtonStyle {
 
 // MARK: - Page scaffold
 
-/// A settings page: one top-aligned content column that reports its natural
-/// height, so the window can size to the page instead of leaving dead space
-/// under a short form. Pages taller than the ceiling scroll.
+/// A settings page: one top-aligned content column inside a fixed-height
+/// scroll region. The height is owned by `SettingsMetrics.pageHeight`, so the
+/// window never resizes when the user moves between tabs — every page is the
+/// same size and only the content changes. Pages taller than the fixed height
+/// scroll; shorter pages simply leave breathing room at the bottom.
 struct SettingsPage<Content: View>: View {
     @ViewBuilder var content: Content
-
-    @State private var naturalHeight: CGFloat = SettingsMetrics.minPageHeight
 
     var body: some View {
         ScrollView(.vertical) {
@@ -184,32 +193,9 @@ struct SettingsPage<Content: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(SettingsMetrics.pageInsets)
-            // Ideal height, not the proposal: the page is measured to size the
-            // window, so it must never stretch to whatever the window already is.
-            .fixedSize(horizontal: false, vertical: true)
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: SettingsPageHeightKey.self, value: proxy.size.height)
-                }
-            )
         }
         .scrollBounceBehavior(.basedOnSize)
-        .onPreferenceChange(SettingsPageHeightKey.self) { height in
-            guard height.isFinite, height > 0 else { return }
-            let stableHeight = min(max(height, SettingsMetrics.minPageHeight),
-                                   SettingsMetrics.maxPageHeight)
-            guard LayoutStability.differs(naturalHeight, stableHeight) else { return }
-            naturalHeight = stableHeight
-        }
-        .frame(height: min(max(naturalHeight, SettingsMetrics.minPageHeight),
-                           SettingsMetrics.maxPageHeight))
-    }
-}
-
-private struct SettingsPageHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
+        .frame(height: SettingsMetrics.pageHeight)
     }
 }
 
@@ -358,7 +344,7 @@ struct GitHubSettingsTab: View {
 
     private enum Field { case label, token }
 
-    private var hasDefault: Bool { !(settings.githubToken ?? "").isEmpty }
+    private var hasDefault: Bool { settings.hasDefaultGitHubToken }
 
     private var canVerify: Bool {
         !newToken.trimmingCharacters(in: .whitespaces).isEmpty && !verifying
@@ -409,7 +395,7 @@ struct GitHubSettingsTab: View {
                 }))
         }
         for account in settings.githubAccounts {
-            let hasToken = !(settings.token(forCredential: account.id) ?? "").isEmpty
+            let hasToken = settings.hasGitHubToken(forCredential: account.id)
             result.append(AccountRow(
                 id: account.id.uuidString,
                 title: account.displayName,
@@ -610,6 +596,24 @@ struct ProviderSettingsTab: View {
                 }
             }
 
+            if showsEffortSection {
+                SettingsSection(
+                    title: "Effort",
+                    footnote: "Only models that support a reasoning control honor this. Lower effort answers faster and cheaper; higher effort thinks longer before replying."
+                ) {
+                    FormRow(label: "Reasoning effort",
+                            footnote: settings.reasoningEffort.summary) {
+                        WCInlineSegmentedControl(
+                            selection: $settings.reasoningEffort,
+                            items: Array(ReasoningEffort.allCases),
+                            accessibilityLabel: "Reasoning effort"
+                        ) { effort in
+                            Text(effort.label)
+                        }
+                    }
+                }
+            }
+
             if settings.providerID == "ondevice" {
                 SettingsSection(title: "On-Device AI") {
                     SettingsStatusLine(onDeviceStatus,
@@ -625,6 +629,13 @@ struct ProviderSettingsTab: View {
                             .focused($focus, equals: .apiKey)
                             .fieldChrome(focused: focus == .apiKey)
                             .onAppear { key = settings.apiKey(for: settings.providerID) ?? "" }
+                            .onChange(of: settings.providerID) { _, newID in
+                                // Keep the field in sync when the provider is
+                                // changed from the top-bar model control while
+                                // this window is open, so "Save Key" cannot
+                                // write one provider's key under another id.
+                                key = settings.apiKey(for: newID) ?? ""
+                            }
                     }
                     SettingsRowDivider()
                     HStack(spacing: Theme.Space.m) {
@@ -676,6 +687,21 @@ struct ProviderSettingsTab: View {
     private var defaultModelLabel: String {
         guard let info else { return "auto" }
         return info.modelLabel(info.defaultModel)
+    }
+
+    /// The model the effort choice applies to: explicit selection, else the
+    /// provider default (custom endpoints keep their typed model ID).
+    private var effortEligibleModel: String {
+        if settings.model.isEmpty {
+            return settings.providerID == "custom" ? settings.customModel
+                : (info?.defaultModel ?? "")
+        }
+        return settings.model
+    }
+
+    private var showsEffortSection: Bool {
+        ReasoningEffortSupport.supports(providerID: settings.providerID,
+                                        model: effortEligibleModel)
     }
 }
 

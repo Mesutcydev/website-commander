@@ -188,16 +188,16 @@ enum BlogImportRunPhase: Equatable, Sendable {
     }
 }
 
-struct BinaryAssetReference: Equatable, Sendable {
+struct BinaryAssetReference: Equatable, Sendable, Codable {
     let sessionID: UUID
     let assetID: UUID
 }
 
-struct TextPendingContent: Equatable, Sendable {
+struct TextPendingContent: Equatable, Sendable, Codable {
     let value: String
 }
 
-struct BinaryPendingContent: Equatable, Sendable {
+struct BinaryPendingContent: Equatable, Sendable, Codable {
     let assetReference: BinaryAssetReference
     let mimeType: String
     let byteCount: Int64
@@ -207,7 +207,7 @@ struct BinaryPendingContent: Equatable, Sendable {
     let suggestedExtension: String
 }
 
-enum PendingChangeContent: Equatable, Sendable {
+enum PendingChangeContent: Equatable, Sendable, Codable {
     case text(TextPendingContent)
     case binary(BinaryPendingContent)
 }

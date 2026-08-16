@@ -15,8 +15,20 @@ extension SiteWorkspace {
     /// palette derived from the name (so each site is visually distinct).
     var accentColor: Color {
         if let hex = accentHex, let c = Color(hex: hex) { return c }
-        let idx = abs(name.hashValue) % Self.accentPalette.count
+        let idx = Self.stableIndex(for: name)
         return Color(hex: Self.accentPalette[idx]) ?? Theme.accent
+    }
+
+    /// A deterministic (per-process-independent) FNV-1a hash so a site's derived
+    /// accent is stable across launches. `String.hashValue` is seeded per
+    /// process, which would change the color every launch (and `abs` can trap
+    /// on `Int.min`).
+    private static func stableIndex(for name: String) -> Int {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in name.utf8 {
+            hash = (hash ^ UInt64(byte)) &* 0x100000001b3
+        }
+        return Int(hash % UInt64(accentPalette.count))
     }
 }
 

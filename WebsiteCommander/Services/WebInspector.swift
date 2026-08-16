@@ -88,22 +88,34 @@ final class WebInspectorModel: ObservableObject {
         inspectedElement = nil
     }
 
+    /// Upper bound on retained console/network entries so a noisy or
+    /// long-running page cannot grow the arrays without limit and force the
+    /// inspector to recompute and republish an ever-larger list on every message.
+    static let maximumEntries = 500
+
+    private func appendBounded<T>(_ value: T, to array: inout [T]) {
+        array.append(value)
+        if array.count > Self.maximumEntries {
+            array.removeFirst(array.count - Self.maximumEntries)
+        }
+    }
+
     /// Route a decoded message dictionary from the page.
     func ingest(_ message: [String: Any]) {
         switch message["type"] as? String {
         case "console":
             let level = ConsoleLog.Level(rawValue: (message["level"] as? String) ?? "log") ?? .log
-            consoleLogs.append(ConsoleLog(level: level,
-                                          text: (message["text"] as? String) ?? "",
-                                          timestamp: Date()))
+            appendBounded(ConsoleLog(level: level,
+                                     text: (message["text"] as? String) ?? "",
+                                     timestamp: Date()), to: &consoleLogs)
         case "network":
-            networkRequests.append(NetworkRequest(
+            appendBounded(NetworkRequest(
                 method: (message["method"] as? String) ?? "GET",
                 url: (message["url"] as? String) ?? "",
                 status: message["status"] as? Int,
                 durationMs: message["duration"] as? Int,
                 sizeBytes: message["size"] as? Int,
-                timestamp: Date()))
+                timestamp: Date()), to: &networkRequests)
         case "performance":
             performance = PerformanceMetrics(
                 loadTimeMs: message["loadTime"] as? Int,

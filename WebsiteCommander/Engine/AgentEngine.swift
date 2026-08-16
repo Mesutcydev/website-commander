@@ -98,6 +98,9 @@ final class AgentEngine: ObservableObject {
     @Published var lastDeploymentWarning: String?
     @Published var lastApprovalError: String?
     @Published private(set) var isRunActive = false
+    /// True while a commit is being pushed to GitHub. Guards against a
+    /// concurrent Decline/discard or a second Approve racing the same batch.
+    @Published private(set) var isCommitting = false
     @Published private(set) var canContinue = false
     @Published private(set) var lastStopReason: String?
     /// Set by dashboard recommendation cards; the Chat view consumes and clears it.
@@ -115,6 +118,9 @@ final class AgentEngine: ObservableObject {
     private var activeTask: Task<Void, Never>?
     private var activeRunID: UUID?
     private var currentRunExpectsEdits = false
+    /// Headless runs that do NOT request approval must never auto-commit, even
+    /// when the GUI's auto-commit setting is on.
+    private var suppressAutoCommit = false
 
     /// User prompts submitted while a turn is running. They live in the
     /// transcript immediately, but their delivery state keeps them out of the
@@ -127,6 +133,13 @@ final class AgentEngine: ObservableObject {
 
     var canQueuePrompt: Bool {
         queuedPromptCount < Self.maximumQueuedPrompts
+    }
+
+    /// Staged changes safe to persist across relaunch: text-only and not part of
+    /// a blog import. Binary media and blog transactions are file-backed and
+    /// must be recreated in-session, so they are deliberately excluded.
+    private var persistablePendingChanges: [PendingChange] {
+        pendingChanges.filter { !$0.isBinary && $0.importSessionID == nil }
     }
 
     // MARK: Experimental blog import
@@ -420,8 +433,8 @@ final class AgentEngine: ObservableObject {
             currentConversationID = conv.id
             currentConversationWorkspaceID = conv.workspaceID
         }
-        pendingChanges = []
-        state = .idle
+        pendingChanges = conv.pendingChanges
+        state = conv.pendingChanges.isEmpty ? .idle : .awaitingApproval
         lastError = nil
         lastCommitNote = nil
         lastDeploymentWarning = nil
@@ -446,6 +459,24 @@ final class AgentEngine: ObservableObject {
             lastStopReason = "This chat was interrupted. Continue the current run to process the queued follow-up prompts."
             state = .paused
         }
+    }
+
+    /// Clears the live transcript when the user deletes the currently-open
+    /// conversation from the Conversations list. Merely nilling
+    /// `currentConversationID` would leave `transcript` intact, so the next
+    /// autosave would re-persist the "deleted" chat under a fresh UUID.
+    func clearCurrentConversation() {
+        withAutosaveSuspended {
+            transcript = []
+            currentConversationID = nil
+            currentConversationWorkspaceID = nil
+        }
+        state = .idle
+        lastError = nil
+        canContinue = false
+        lastStopReason = nil
+        clearLiveStreams()
+        rebuildSystemPrompt()
     }
 
     /// After a crash/relaunch the engine starts empty even though the shell
@@ -519,6 +550,7 @@ final class AgentEngine: ObservableObject {
         }
         let saved = store.save(title: title,
                                messages: transcript,
+                               pendingChanges: persistablePendingChanges,
                                workspaceID: currentConversationWorkspaceID,
                                id: currentConversationID)
         currentConversationID = saved?.id ?? currentConversationID
@@ -603,6 +635,47 @@ final class AgentEngine: ObservableObject {
 
     func rebuildSystemPrompt() {
         context = [.system(systemPrompt())]
+    }
+
+    /// Replace only the standing system message, preserving the conversation
+    /// turns that already accumulated. Called at the start of every run so a
+    /// workspace switch mid-session cannot leave the model instructed about the
+    /// previous site while its tools operate on the newly active repository.
+    private func refreshSystemPrompt() {
+        let prompt = systemPrompt()
+        if context.isEmpty {
+            context = [.system(prompt)]
+        } else {
+            context[0] = .system(prompt)
+        }
+    }
+
+    /// Rough token budget for the model context. When exceeded, the oldest
+    /// complete turns are dropped so a long session degrades gracefully instead
+    /// of hard-failing the provider once the window fills up.
+    static let contextTokenBudget = 80_000
+
+    /// Rough token estimate (~4 characters per token, conservative for code).
+    private func estimatedTokens() -> Int {
+        context.reduce(0) { acc, msg in
+            acc + (msg.content?.count ?? 0) + (msg.reasoning?.count ?? 0)
+        } / 4
+    }
+
+    /// Drop whole turns (user → assistant → tool results) from the front of the
+    /// context — never the system message — until the estimated token count is
+    /// back under budget. Dropping complete turns keeps every tool result paired
+    /// with the assistant tool call that produced it.
+    private func trimContextIfNeeded() {
+        while estimatedTokens() > Self.contextTokenBudget {
+            guard let firstUser = context.firstIndex(where: { $0.role == "user" }) else { return }
+            let afterFirst = context.index(after: firstUser)
+            guard let nextUser = context[afterFirst...].firstIndex(where: { $0.role == "user" }) else {
+                // Only one turn remains; stop trimming.
+                return
+            }
+            context.removeSubrange(firstUser..<nextUser)
+        }
     }
 
     private func systemPrompt() -> String {
@@ -879,6 +952,74 @@ final class AgentEngine: ObservableObject {
         startNextQueuedPromptIfPossible()
     }
 
+    /// Whether "send this queued prompt now" can act. An active turn can be
+    /// interrupted; an idle queue must not be waiting on staged changes or a
+    /// commit, and a blog import transaction can never be jumped.
+    var canSendQueuedPromptNow: Bool {
+        if activeBlogImportSessionID != nil { return false }
+        if isRunActive { return true }
+        return !isCommitting && pendingChanges.isEmpty
+    }
+
+    /// Run one queued follow-up immediately instead of waiting for the queue's
+    /// turn order: stop the active turn (keeping its partial reply) and start
+    /// the chosen prompt next. The remaining queued prompts keep their order
+    /// behind it.
+    func sendQueuedPromptNow(_ id: UUID, using provider: LLMProvider? = nil) {
+        guard let index = transcript.firstIndex(where: {
+            $0.id == id && $0.role == .user && $0.isQueued
+        }) else { return }
+        guard settings.activeWorkspace != nil else {
+            lastError = "Connect a website before running the queued follow-up prompts."
+            return
+        }
+        let resolvedProvider = provider ?? currentProvider()
+        guard let resolvedProvider else {
+            lastError = "No AI provider configured. Add an API key in Settings."
+            return
+        }
+        guard activeBlogImportSessionID == nil else { return }
+        moveQueuedPromptToFront(index: index)
+
+        guard isRunActive else {
+            // Nothing in flight: run the chosen prompt through the normal
+            // recovery path, abandoning a paused continuation the user chose
+            // not to finish.
+            lastError = nil
+            lastApprovalError = nil
+            lastStopReason = nil
+            canContinue = false
+            startNextQueuedPromptIfPossible(using: resolvedProvider)
+            return
+        }
+        // Interrupt the in-flight turn the way Stop does, then drain the queue
+        // once the cancelled run has fully unwound — its tool loop may still be
+        // flushing trailing tool results into the context, and a new user turn
+        // must never interleave with that.
+        let previousTask = activeTask
+        cancelGeneration()
+        Task { @MainActor in
+            await previousTask?.value
+            guard !self.isRunActive else { return }
+            self.lastError = nil
+            self.lastApprovalError = nil
+            self.lastStopReason = nil
+            self.canContinue = false
+            self.startNextQueuedPromptIfPossible(using: resolvedProvider)
+        }
+    }
+
+    /// Move one queued prompt ahead of the other queued prompts so the next
+    /// queue drain runs it first.
+    private func moveQueuedPromptToFront(index: Int) {
+        guard let firstQueued = transcript.firstIndex(where: {
+            $0.role == .user && $0.isQueued
+        }), firstQueued < index else { return }
+        let message = transcript.remove(at: index)
+        transcript.insert(message, at: firstQueued)
+        flushConversation()
+    }
+
     /// Retry the provider request that failed without appending a duplicate
     /// user message. Queued follow-ups remain behind the retried turn and drain
     /// only after it succeeds.
@@ -1005,6 +1146,12 @@ final class AgentEngine: ObservableObject {
         context.append(.user(trimmed))
         currentRunExpectsEdits = Self.requestExpectsEdits(trimmed)
         lastTurnCostUSD = 0
+        // Headless no-approve runs must honor the caller's intent: the GUI's
+        // auto-commit setting is overridden so `wc use` without --approve can
+        // never commit, as its help text promises.
+        let previousSuppress = suppressAutoCommit
+        if !autoApprove { suppressAutoCommit = true }
+        defer { suppressAutoCommit = previousSuppress }
         await runLoop(provider: provider)
 
         var committed = 0
@@ -1022,6 +1169,7 @@ final class AgentEngine: ObservableObject {
 
     private func runLoop(provider: LLMProvider) async {
         guard let workspace = settings.activeWorkspace else { return }
+        refreshSystemPrompt()
         let model = settings.resolvedModel(defaultFor: provider.defaultModel)
         let vision = provider.capabilities(for: model).supportsVision
         var toolEvents: [ToolEvent] = []
@@ -1039,6 +1187,7 @@ final class AgentEngine: ObservableObject {
                 return
             }
             state = .thinking
+            trimContextIfNeeded()
             beginStream()
             let response: LLMResponse
             while true {
@@ -1132,7 +1281,8 @@ final class AgentEngine: ObservableObject {
                     state = pendingChanges.isEmpty ? .done : .awaitingApproval
                 }
                 flushConversation()
-                if settings.autoCommit && activeBlogImportSessionID == nil && !pendingChanges.isEmpty {
+                if settings.autoCommit && !suppressAutoCommit
+                    && activeBlogImportSessionID == nil && !pendingChanges.isEmpty {
                     _ = await approveAll()
                 }
                 return
@@ -1261,7 +1411,7 @@ final class AgentEngine: ObservableObject {
         let args = (try? JSONSerialization.jsonObject(with: Data(call.argumentsJSON.utf8))) as? [String: Any] ?? [:]
         switch call.name {
         case "read_file":   return "Read \((args["path"] as? String) ?? "…")"
-        case "list_files":  return "List \((args["path"] as? String)?.isEmpty == false ? (args["path"] as! String) : "/")"
+        case "list_files":  return "List \((args["path"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "/")"
         case "write_file":  return "Edit \((args["path"] as? String) ?? "…")"
         case "search_files": return "Search \((args["query"] as? String) ?? "…")"
         case "declare_blog_convention": return "Declare blog convention"
@@ -1337,7 +1487,13 @@ final class AgentEngine: ObservableObject {
             catch { return ToolResult(text: error.localizedDescription, success: false) }
         case "browser_evaluate":
             guard let js = args["js"] as? String else { return ToolResult(text: "Missing js.", success: false) }
-            do { return ToolResult(text: try await browserController.evaluate(js), success: true) }
+            do {
+                let result = try await browserController.evaluate(js)
+                // The page controls this string; fence it like every other
+                // untrusted tool result so an injected instruction cannot reach
+                // the model as trusted text.
+                return ToolResult(text: PromptGuard.fence(source: "browser_evaluate result", result), success: true)
+            }
             catch { return ToolResult(text: error.localizedDescription, success: false) }
         default:
             break
@@ -1370,7 +1526,8 @@ final class AgentEngine: ObservableObject {
                 let entries = try await gitHub.contents(owner: workspace.gitOwner, repo: workspace.gitRepo,
                                                         path: path, branch: workspace.gitBranch)
                 let lines = entries.map { "\($0.type == .dir ? "📁" : "📄") \($0.path)" }
-                return ToolResult(text: lines.isEmpty ? "(empty)" : lines.joined(separator: "\n"), success: true)
+                let listing = lines.isEmpty ? "(empty)" : lines.joined(separator: "\n")
+                return ToolResult(text: PromptGuard.fence(source: "repository listing", listing), success: true)
             } catch { return ToolResult(text: error.localizedDescription, success: false) }
 
         case "read_file":
@@ -1390,7 +1547,8 @@ final class AgentEngine: ObservableObject {
             do {
                 let all = try await flattenTree(gitHub: gitHub, workspace: workspace, path: "")
                 let matches = all.filter { $0.lowercased().contains(query) }.prefix(40)
-                return ToolResult(text: matches.isEmpty ? "No matches." : matches.joined(separator: "\n"), success: true)
+                let listing = matches.isEmpty ? "No matches." : matches.joined(separator: "\n")
+                return ToolResult(text: PromptGuard.fence(source: "repository search", listing), success: true)
             } catch { return ToolResult(text: error.localizedDescription, success: false) }
 
         case "write_file":
@@ -1594,16 +1752,37 @@ final class AgentEngine: ObservableObject {
             return await stageBlogText(path: path, content: content, message: message,
                                        workspace: workspace, gitHub: gitHub)
         }
+        // The ordinary write path must reject traversal exactly like read_file
+        // and list_files do; a model (or injected instruction) must not be able
+        // to target an absolute path or a `.git` path through write_file.
+        guard let normalizedPath = BlogPathRules.normalizedRelativePath(path) else {
+            return ToolResult(text: "Rejected unsafe repository path.", success: false)
+        }
         var oldContent: String? = nil
         var baseSHA: String? = nil
-        if let existing = try? await gitHub.fileContent(owner: workspace.gitOwner, repo: workspace.gitRepo,
-                                                       path: path, branch: workspace.gitBranch) {
+        do {
+            let existing = try await gitHub.fileContent(owner: workspace.gitOwner, repo: workspace.gitRepo,
+                                                        path: normalizedPath, branch: workspace.gitBranch)
             oldContent = existing.content
             baseSHA = existing.sha
+        } catch let error as GitHubError {
+            // Only a genuine 404 means "new file". A rate limit, auth failure,
+            // or network error must not be mistaken for an empty file, or an
+            // existing file would be staged without its base SHA and silently
+            // overwritten at commit time.
+            if case .http(404, _) = error {
+                oldContent = nil
+                baseSHA = nil
+            } else {
+                return ToolResult(text: "Could not read \(normalizedPath) before staging: \(error.localizedDescription)", success: false)
+            }
+        } catch {
+            return ToolResult(text: "Could not read \(normalizedPath) before staging: \(error.localizedDescription)", success: false)
         }
-        stagePendingChange(path: path, content: content, message: message,
-                           oldContent: oldContent, baseSHA: baseSHA)
-        return ToolResult(text: "Staged a change to \(path) for the user to review. It will NOT be committed until approved.",
+        stagePendingChange(path: normalizedPath, content: content, message: message,
+                           oldContent: oldContent, baseSHA: baseSHA,
+                           workspaceID: workspace.id)
+        return ToolResult(text: "Staged a change to \(normalizedPath) for the user to review. It will NOT be committed until approved.",
                           success: true)
     }
 
@@ -1662,10 +1841,15 @@ final class AgentEngine: ObservableObject {
     }
 
     func stagePendingChange(path: String, content: String, message: String,
-                            oldContent: String?, baseSHA: String?) {
+                            oldContent: String?, baseSHA: String?,
+                            workspaceID: UUID? = nil) {
+        // The workspace captured when the run started is authoritative: the user
+        // may switch the active site while a tool turn is in flight, and the
+        // staged change must never be re-homed to a different repository.
         let change = PendingChange(path: path, oldContent: oldContent, newContent: content,
                                    message: message, risks: SecurityScanner.scan(content),
-                                   baseSHA: baseSHA, workspaceID: settings.activeWorkspace?.id)
+                                   baseSHA: baseSHA,
+                                   workspaceID: workspaceID ?? settings.activeWorkspace?.id)
         if let index = pendingChanges.firstIndex(where: { $0.path == path }) {
             pendingChanges[index].newContent = content
             pendingChanges[index].message = message
@@ -1975,6 +2159,12 @@ final class AgentEngine: ObservableObject {
     /// Commit a single staged change to GitHub.
     @discardableResult
     func approve(_ change: PendingChange) async -> Bool {
+        guard !isCommitting else {
+            lastApprovalError = "A commit is already in progress. Wait for it to finish."
+            return false
+        }
+        isCommitting = true
+        defer { isCommitting = false }
         if let sessionID = change.importSessionID {
             var importChanges = pendingChanges.filter { $0.importSessionID == sessionID }
             if !importChanges.contains(where: { $0.id == change.id }) {
@@ -1991,6 +2181,12 @@ final class AgentEngine: ObservableObject {
     /// batch has committed.
     @discardableResult
     func approveAll() async -> Bool {
+        guard !isCommitting else {
+            lastApprovalError = "A commit is already in progress. Wait for it to finish."
+            return false
+        }
+        isCommitting = true
+        defer { isCommitting = false }
         let changes = pendingChanges
         var allOK = true
         var approvedSessions = Set<UUID>()
@@ -2033,6 +2229,10 @@ final class AgentEngine: ObservableObject {
     }
 
     func discard(_ change: PendingChange) {
+        guard !isCommitting else {
+            lastApprovalError = "A commit is in progress; wait for it to finish before discarding."
+            return
+        }
         if let sessionID = change.importSessionID {
             pendingChanges.removeAll { $0.importSessionID == sessionID }
             if activeBlogImportSessionID == sessionID {
@@ -2052,6 +2252,10 @@ final class AgentEngine: ObservableObject {
     }
 
     func discardAll() {
+        guard !isCommitting else {
+            lastApprovalError = "A commit is in progress; wait for it to finish before discarding."
+            return
+        }
         let sessionIDs = Set(pendingChanges.compactMap(\.importSessionID))
         pendingChanges.removeAll()
         let activeSession = activeBlogImportSessionID

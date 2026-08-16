@@ -250,12 +250,19 @@ struct TopBar: View {
 
     private func select(_ item: Destination) {
         guard item != destination else { return }
-        withAnimation(Theme.Chrome.Timing.selection) { destination = item }
+        // Deliberately NOT animated: an animated destination swap keeps both
+        // the outgoing and incoming workspaces (and their web views) in the
+        // view graph at once, which drives the AttributeGraph into a
+        // pathological update on recent macOS releases and freezes the main
+        // thread for minutes.
+        destination = item
     }
 
     private func setPreview(_ visible: Bool) {
         guard visible != showsPreview else { return }
-        withAnimation(Theme.Chrome.Timing.selection) { showsPreview = visible }
+        // Same reasoning as `select`: keep the preview toggle un-animated so a
+        // split change cannot wedge the view graph.
+        showsPreview = visible
     }
 
     /// The one contextual action: start a new change, or stop the run in

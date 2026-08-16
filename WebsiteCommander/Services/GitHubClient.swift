@@ -75,7 +75,10 @@ struct GitHubClient {
     private func request(_ path: String, method: String = "GET",
                          body: [String: Any]? = nil) async throws -> (Data, HTTPURLResponse) {
         guard !token.isEmpty else { throw GitHubError.noToken }
-        var req = URLRequest(url: URL(string: apiBase + path)!)
+        guard let url = URL(string: apiBase + path) else {
+            throw GitHubError.decoding("invalid request URL")
+        }
+        var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -126,12 +129,21 @@ struct GitHubClient {
         }
     }
 
+    /// Percent-encode a single query-string value so a branch name containing
+    /// spaces or reserved characters cannot corrupt the request or crash URL
+    /// construction.
+    private static func queryValue(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
     // MARK: Contents
 
     /// List entries at `path` ("" = repo root).
     func contents(owner: String, repo: String, path: String, branch: String) async throws -> [RepoEntry] {
         let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
-        let (data, _) = try await request("/repos/\(owner)/\(repo)/contents/\(encoded)?ref=\(branch)")
+        let (data, _) = try await request("/repos/\(owner)/\(repo)/contents/\(encoded)?ref=\(Self.queryValue(branch))")
         guard let arr = try json(data) as? [[String: Any]] else {
             throw GitHubError.decoding("contents")
         }
@@ -151,7 +163,7 @@ struct GitHubClient {
     /// UTF-8 decoding.
     func fileData(owner: String, repo: String, path: String, branch: String) async throws -> (data: Data, sha: String) {
         let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
-        let (data, _) = try await request("/repos/\(owner)/\(repo)/contents/\(encoded)?ref=\(branch)")
+        let (data, _) = try await request("/repos/\(owner)/\(repo)/contents/\(encoded)?ref=\(Self.queryValue(branch))")
         guard let obj = try json(data) as? [String: Any] else {
             throw GitHubError.decoding("file data")
         }
@@ -344,7 +356,7 @@ struct GitHubClient {
     // MARK: History
 
     func commits(owner: String, repo: String, branch: String, limit: Int = 30) async throws -> [CommitEntry] {
-        let (data, _) = try await request("/repos/\(owner)/\(repo)/commits?sha=\(branch)&per_page=\(limit)")
+        let (data, _) = try await request("/repos/\(owner)/\(repo)/commits?sha=\(Self.queryValue(branch))&per_page=\(limit)")
         guard let arr = try json(data) as? [[String: Any]] else {
             throw GitHubError.decoding("commits")
         }
@@ -410,9 +422,8 @@ struct GitHubClient {
     func testConnection(owner: String, repo: String) async throws -> (read: Bool, write: Bool, login: String) {
         let (userData, _) = try await request("/user")
         let login = ((try? json(userData)) as? [String: Any])?["login"] as? String ?? "unknown"
-        // Read check
-        _ = try await request("/repos/\(owner)/\(repo)")
-        // Write check via the permissions field on the repo object.
+        // One repo request doubles as the read check and the write-permission
+        // probe (the `permissions` field is part of the same object).
         let (repoData, _) = try await request("/repos/\(owner)/\(repo)")
         var write = false
         if let obj = try? json(repoData) as? [String: Any],

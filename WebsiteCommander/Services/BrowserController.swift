@@ -242,6 +242,11 @@ final class BrowserController: ObservableObject {
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\r", with: "\\r")
+            // U+2028/U+2029 are line terminators inside JS string literals
+            // (JSON allows them; JS does not), so escape them explicitly or a
+            // selector/text containing one would be a syntax error.
+            .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
+            .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
         return "\"\(escaped)\""
     }
 }

@@ -150,6 +150,68 @@ enum ModelReasoningSupport {
     }
 }
 
+/// User-facing reasoning effort for models that expose one. `.default` sends
+/// no effort parameter and keeps each provider's current request shape.
+enum ReasoningEffort: String, Codable, CaseIterable, Identifiable {
+    case `default`
+    case low
+    case medium
+    case high
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .default: return String(localized: "Default")
+        case .low:     return String(localized: "Low")
+        case .medium:  return String(localized: "Medium")
+        case .high:    return String(localized: "High")
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .default: return String(localized: "Provider default")
+        case .low:     return String(localized: "Fastest, least thinking")
+        case .medium:  return String(localized: "Balanced")
+        case .high:    return String(localized: "Deepest thinking")
+        }
+    }
+}
+
+/// Pure heuristics for which provider+model combinations honor an effort
+/// choice, mirroring what the providers can actually change on the wire.
+/// Kept free of Keychain access so popover layout can call it safely.
+enum ReasoningEffortSupport {
+    static func supports(providerID: String, model: String) -> Bool {
+        switch providerID {
+        case "ondevice":
+            return false
+        case "anthropic":
+            return ModelReasoningSupport.anthropic(model)
+        case "gemini":
+            return ModelReasoningSupport.gemini(model)
+        default:
+            // OpenAI, DeepSeek, Copilot, custom endpoints, and OpenAI-compatible
+            // gateways all speak the same model-ID space.
+            return openAICompatible(model)
+        }
+    }
+
+    /// Models that accept `reasoning_effort` (OpenAI o-series / GPT-5 family)
+    /// or a thinking on/off toggle (DeepSeek V4 family).
+    static func openAICompatible(_ model: String) -> Bool {
+        let m = model.lowercased()
+        if m.hasPrefix("o1") || m.hasPrefix("o3") || m.hasPrefix("o4") { return true }
+        if m.hasPrefix("gpt-5") { return true }
+        if m.contains("deepseek") {
+            return m.contains("v4") || m.contains("reasoner") || m.contains("r1")
+                || m.contains("v3.2") || m.contains("thinking")
+        }
+        return false
+    }
+}
+
 // MARK: - The pluggable protocol
 
 /// Conform a new type to this to add any provider. Switch the active one in Settings.

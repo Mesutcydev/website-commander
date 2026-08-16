@@ -42,14 +42,17 @@ struct LocalWorkspaceStore {
     }
 
     /// Clone the repo if missing; otherwise fast-forward to the remote branch.
-    /// Auth is passed transiently via an HTTP header so the token is NEVER written
-    /// to `.git/config` (the stored remote is a clean, token-free URL).
+    /// A fast-forward-only merge preserves uncommitted local edits (the
+    /// "Open in VSCode and edit" workflow) instead of `reset --hard` wiping
+    /// them; a divergent or conflicting clone surfaces a git error instead of
+    /// silently destroying work. Auth is passed transiently via an HTTP header
+    /// so the token is NEVER written to `.git/config`.
     static func ensureClone(_ workspace: SiteWorkspace, token: String) async throws -> URL {
         let dest = localPath(for: workspace)
         let cleanURL = remoteURL(for: workspace)
         if isCloned(workspace) {
             try await runGit(["-C", dest.path] + authArgs(token) + ["fetch", "origin", workspace.gitBranch])
-            try await runGit(["-C", dest.path, "reset", "--hard", "origin/\(workspace.gitBranch)"])
+            try await runGit(["-C", dest.path, "merge", "--ff-only", "origin/\(workspace.gitBranch)"])
         } else {
             try? FileManager.default.createDirectory(
                 at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)

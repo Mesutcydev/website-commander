@@ -23,11 +23,27 @@ final class ConversationStore: ObservableObject {
     init() { load() }
 
     func load() {
-        guard let data = try? Data(contentsOf: Self.fileURL),
-              let list = try? JSONDecoder().decode([SavedConversation].self, from: data) else {
+        let url = Self.fileURL
+        guard let data = try? Data(contentsOf: url) else {
+            conversations = []; return
+        }
+        guard let list = try? JSONDecoder().decode([SavedConversation].self, from: data) else {
+            // A corrupt or version-incompatible file must never be silently
+            // overwritten by the next autosave. Quarantine it so the user can
+            // recover their history instead of losing it permanently.
+            Self.quarantineCorruptFile(url)
             conversations = []; return
         }
         conversations = list.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Move a file that failed to decode aside so a subsequent `persist()` cannot
+    /// clobber the user's real history with an empty list.
+    private static func quarantineCorruptFile(_ url: URL) {
+        let stamp = Int(Date().timeIntervalSince1970)
+        let backup = url.deletingLastPathComponent()
+            .appendingPathComponent("conversations.corrupt-\(stamp).json")
+        try? FileManager.default.moveItem(at: url, to: backup)
     }
 
     private func persist() {
@@ -58,7 +74,8 @@ final class ConversationStore: ObservableObject {
     /// - A nil/blank `title` never overwrites a title the user set; it only
     ///   seeds one derived from the first user message.
     @discardableResult
-    func save(title: String?, messages: [ChatMessage], workspaceID: UUID?, id: UUID? = nil) -> SavedConversation? {
+    func save(title: String?, messages: [ChatMessage], pendingChanges: [PendingChange] = [],
+              workspaceID: UUID?, id: UUID? = nil) -> SavedConversation? {
         guard !messages.isEmpty else { return nil }
         let requested = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let explicitTitle = (requested?.isEmpty == false) ? requested : nil
@@ -70,6 +87,7 @@ final class ConversationStore: ObservableObject {
                 conversations[idx].title = Self.deriveTitle(from: messages)
             }
             conversations[idx].messages = messages
+            conversations[idx].pendingChanges = pendingChanges
             conversations[idx].updatedAt = Date()
             persist(); return conversations[idx]
         }
@@ -77,7 +95,8 @@ final class ConversationStore: ObservableObject {
         let conv = SavedConversation(id: id ?? UUID(),
                                      workspaceID: workspaceID,
                                      title: explicitTitle ?? Self.deriveTitle(from: messages),
-                                     messages: messages)
+                                     messages: messages,
+                                     pendingChanges: pendingChanges)
         conversations.insert(conv, at: 0)
         persist(); return conv
     }

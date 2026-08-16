@@ -199,7 +199,10 @@ enum Runner {
             consoleErrors: [], consoleWarnings: [], failedRequests: [],
             loadMs: nil, domReadyMs: nil, transferKB: nil,
             audit: [], injection: [], lastAgentError: nil, stagedChanges: 0)
-        let file = EditorBridge.writeBrief(brief, repoPath: repoPath)
+        guard let file = EditorBridge.writeBrief(brief, repoPath: repoPath) else {
+            FileHandle.standardError.write(Data("Could not write the debug brief. Check write permissions.\n".utf8))
+            exit(1)
+        }
         FileHandle.standardError.write(Data("Debug brief written to \(file.path)\n".utf8))
         let target = AgentTarget(rawValue: flags["for"] ?? "") ?? .codex
         print(brief.prompt(for: target, briefPath: file.path))
@@ -209,6 +212,14 @@ enum Runner {
 
     // MARK: helpers
 
+    /// Flags that take a following value. Every other `--flag` is a bare boolean
+    /// (e.g. `--approve`, `--help`), so `wc use site --approve add a contact form`
+    /// keeps "add" as part of the prompt instead of consuming it as the flag's
+    /// value and silently dropping it.
+    private static let valueFlags: Set<String> = [
+        "owner", "repo", "name", "branch", "stack", "deploy", "url", "model", "hook", "prompt", "for"
+    ]
+
     /// Parse `--key value` and bare `--flag` tokens into a dictionary.
     private static func parseFlags(_ args: [String]) -> [String: String] {
         var flags: [String: String] = [:]
@@ -217,11 +228,11 @@ enum Runner {
             let token = args[i]
             if token.hasPrefix("--") {
                 let key = String(token.dropFirst(2))
-                if i + 1 < args.count && !args[i + 1].hasPrefix("--") {
+                if valueFlags.contains(key), i + 1 < args.count, !args[i + 1].hasPrefix("--") {
                     flags[key] = args[i + 1]
                     i += 2
                 } else {
-                    flags[key] = ""   // bare flag (e.g. --approve)
+                    flags[key] = ""   // bare flag
                     i += 1
                 }
             } else {
@@ -231,14 +242,16 @@ enum Runner {
         return flags
     }
 
-    /// Positional (non-flag) tokens; a flag's value is skipped with its flag.
+    /// Positional (non-flag) tokens; a value-taking flag's value is skipped with
+    /// its flag, while bare flags consume only themselves.
     private static func parsePositionals(_ args: [String]) -> [String] {
         var positionals: [String] = []
         var i = 0
         while i < args.count {
             let token = args[i]
             if token.hasPrefix("--") {
-                i += (i + 1 < args.count && !args[i + 1].hasPrefix("--")) ? 2 : 1
+                let key = String(token.dropFirst(2))
+                i += (valueFlags.contains(key) && i + 1 < args.count && !args[i + 1].hasPrefix("--")) ? 2 : 1
             } else {
                 positionals.append(token)
                 i += 1

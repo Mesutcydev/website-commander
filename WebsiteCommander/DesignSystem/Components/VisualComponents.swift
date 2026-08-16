@@ -608,13 +608,15 @@ struct HelpButton: View {
                 if !links.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(links, id: \.url) { link in
-                            Link(destination: URL(string: link.url)!) {
+                            if let destination = URL(string: link.url) {
+                            Link(destination: destination) {
                                 HStack(spacing: 4) {
                                     Text(link.label)
                                     Image(systemName: "arrow.up.right")
                                         .font(.caption2)
                                 }
                                 .font(.callout.weight(.medium))
+                            }
                             }
                         }
                     }

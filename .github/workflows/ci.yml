@@ -46,3 +46,8 @@ jobs:
           "$WC" help >/dev/null
           "$WC" providers | grep -q '"openai"'
           echo "wc smoke OK"
+
+      - name: Type-check VS Code extension
+        run: |
+          cd extensions/vscode
+          npx tsc --noEmit -p ./

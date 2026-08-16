@@ -225,11 +225,15 @@ struct TopBarPopoverLayer: View {
 
     private func select(_ item: Destination) {
         guard item != destination else { return }
-        withAnimation(Theme.Chrome.Timing.selection) { destination = item }
+        // Deliberately NOT animated: an animated destination swap keeps both
+        // workspaces in the view graph at once and wedges the AttributeGraph
+        // update on recent macOS releases (see TopBar.select).
+        destination = item
     }
 
     private func setPreview(_ visible: Bool) {
         guard visible != showsPreview else { return }
-        withAnimation(Theme.Chrome.Timing.selection) { showsPreview = visible }
+        // Same reasoning as `select`: keep the preview toggle un-animated.
+        showsPreview = visible
     }
 }

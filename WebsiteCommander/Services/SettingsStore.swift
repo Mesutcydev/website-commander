@@ -69,6 +69,10 @@ final class SettingsStore: ObservableObject {
     @Published var activeWorkspaceID: UUID? { didSet { save() } }
     @Published var providerID: String = "openai" { didSet { save() } }
     @Published var model: String = "" { didSet { save() } }
+    /// Reasoning effort for models that support one (o-series, GPT-5, Claude
+    /// thinking, Gemini 2.5+, DeepSeek V4). Ignored by models without an
+    /// effort control; `.default` sends no parameter at all.
+    @Published var reasoningEffort: ReasoningEffort = .default { didSet { save() } }
     @Published var autoCommit: Bool = false { didSet { save() } }
     @Published var smartRouting: Bool = false { didSet { save() } }
     @Published var routingStrategy: RoutingStrategy = .code { didSet { save() } }
@@ -179,8 +183,11 @@ final class SettingsStore: ObservableObject {
                 paired.insert(providerID)
             }
             DispatchQueue.main.async {
-                guard let self, self.pairedProviderIDs != paired else { return }
-                self.pairedProviderIDs = paired
+                guard let self else { return }
+                if self.pairedProviderIDs != paired {
+                    self.pairedProviderIDs = paired
+                    self.persistCachedMetadata()
+                }
             }
         }
     }
@@ -252,6 +259,7 @@ final class SettingsStore: ObservableObject {
                 self.readyWorkspaceIDs = ready
                 self.hasDefaultGitHubToken = !fallback.isEmpty
                 self.availableGitHubCredentialIDs = available
+                self.persistCachedMetadata()
             }
         }
     }
@@ -337,6 +345,7 @@ final class SettingsStore: ObservableObject {
         var activeWorkspaceID: UUID?
         var providerID: String
         var model: String
+        var reasoningEffort: ReasoningEffort
         var autoCommit: Bool
         var smartRouting: Bool
         var routingStrategy: RoutingStrategy
@@ -365,6 +374,7 @@ final class SettingsStore: ObservableObject {
             activeWorkspaceID = try? c.decode(UUID?.self, forKey: .activeWorkspaceID)
             providerID = (try? c.decode(String.self, forKey: .providerID)) ?? "openai"
             model = (try? c.decode(String.self, forKey: .model)) ?? ""
+            reasoningEffort = (try? c.decode(ReasoningEffort.self, forKey: .reasoningEffort)) ?? .default
             autoCommit = (try? c.decode(Bool.self, forKey: .autoCommit)) ?? false
             smartRouting = (try? c.decode(Bool.self, forKey: .smartRouting)) ?? false
             routingStrategy = (try? c.decode(RoutingStrategy.self, forKey: .routingStrategy)) ?? .code
@@ -386,6 +396,7 @@ final class SettingsStore: ObservableObject {
         }
 
         init(workspaces: [SiteWorkspace], activeWorkspaceID: UUID?, providerID: String, model: String,
+             reasoningEffort: ReasoningEffort,
              autoCommit: Bool, smartRouting: Bool, routingStrategy: RoutingStrategy, themeMode: ThemeMode,
              hasCompletedOnboarding: Bool, customBaseURL: String, customModel: String,
              cloudSyncEnabled: Bool, githubAccounts: [GitHubCredential],
@@ -397,6 +408,7 @@ final class SettingsStore: ObservableObject {
             self.activeWorkspaceID = activeWorkspaceID
             self.providerID = providerID
             self.model = model
+            self.reasoningEffort = reasoningEffort
             self.autoCommit = autoCommit
             self.smartRouting = smartRouting
             self.routingStrategy = routingStrategy
@@ -460,19 +472,70 @@ final class SettingsStore: ObservableObject {
     /// default is already a process-scoped temp path (see `defaultFileURL()`).
     static var fileURL: URL = SettingsStore.defaultFileURL()
 
+    // MARK: Cached (non-secret) readiness metadata
+    //
+    // `pairedProviderIDs`, `hasDefaultGitHubToken`,
+    // `availableGitHubCredentialIDs`, and `readyWorkspaceIDs` are derived from
+    // the Keychain, but discovering them requires reading secrets — and reading
+    // a saved secret from a re-signed build queues an access-control prompt.
+    // The non-secret metadata is therefore cached in UserDefaults and refreshed
+    // only when a key/token changes (a user-initiated action where a single
+    // prompt is acceptable), never at launch.
+
+    private static let cachedPairedProvidersKey = "settings.cachedPairedProviderIDs"
+    private static let cachedDefaultTokenKey = "settings.cachedHasDefaultGitHubToken"
+    private static let cachedCredentialIDsKey = "settings.cachedAvailableCredentialIDs"
+    private static let cachedReadyWorkspacesKey = "settings.cachedReadyWorkspaceIDs"
+
+    private func loadCachedMetadata() {
+        let defaults = UserDefaults.standard
+        if let array = defaults.stringArray(forKey: Self.cachedPairedProvidersKey) {
+            pairedProviderIDs = Set(array)
+        }
+        hasDefaultGitHubToken = defaults.bool(forKey: Self.cachedDefaultTokenKey)
+        if let array = defaults.stringArray(forKey: Self.cachedCredentialIDsKey) {
+            availableGitHubCredentialIDs = Set(array.compactMap(UUID.init(uuidString:)))
+        }
+        if let array = defaults.stringArray(forKey: Self.cachedReadyWorkspacesKey) {
+            readyWorkspaceIDs = Set(array.compactMap(UUID.init(uuidString:)))
+        }
+    }
+
+    private func persistCachedMetadata() {
+        let defaults = UserDefaults.standard
+        defaults.set(Array(pairedProviderIDs).sorted(), forKey: Self.cachedPairedProvidersKey)
+        defaults.set(hasDefaultGitHubToken, forKey: Self.cachedDefaultTokenKey)
+        defaults.set(availableGitHubCredentialIDs.map(\.uuidString).sorted(), forKey: Self.cachedCredentialIDsKey)
+        defaults.set(readyWorkspaceIDs.map(\.uuidString).sorted(), forKey: Self.cachedReadyWorkspacesKey)
+    }
+
     init() {
+        // Consolidate all secrets into one Keychain vault item (migrating any
+        // legacy per-key items in a single bulk query). A freshly re-signed
+        // ad-hoc build then queues at most one access-control prompt instead of
+        // one per saved secret.
+        Keychain.prime()
         load()
-        refreshReadiness()
-        refreshPairedProviders()
+        // Load non-secret readiness metadata from UserDefaults instead of
+        // probing the Keychain at launch, so readiness UI never blocks on the
+        // vault prompt.
+        loadCachedMetadata()
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: Self.fileURL),
-              let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
+        guard let data = try? Data(contentsOf: Self.fileURL) else { return }
+        guard let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else {
+            // A truncated/corrupt settings file would otherwise be silently
+            // overwritten with defaults on the next save, wiping the user's
+            // sites. Quarantine it for recovery instead.
+            Self.quarantineCorruptFile()
+            return
+        }
         workspaces = snap.workspaces
         activeWorkspaceID = snap.activeWorkspaceID
         providerID = snap.providerID
         model = snap.model
+        reasoningEffort = snap.reasoningEffort
         autoCommit = snap.autoCommit
         smartRouting = snap.smartRouting
         routingStrategy = snap.routingStrategy
@@ -493,6 +556,16 @@ final class SettingsStore: ObservableObject {
         spendWarningUSD = snap.spendWarningUSD
     }
 
+    /// Move an undecodable settings file aside so the next `save()` cannot
+    /// clobber the user's real configuration with defaults.
+    private static func quarantineCorruptFile() {
+        let url = Self.fileURL
+        let stamp = Int(Date().timeIntervalSince1970)
+        let backup = url.deletingLastPathComponent()
+            .appendingPathComponent("settings.corrupt-\(stamp).json")
+        try? FileManager.default.moveItem(at: url, to: backup)
+    }
+
     private func save() {
         // Belt-and-suspenders: never clobber the real settings file from XCTest,
         // even if a test points `fileURL` at Application Support by mistake.
@@ -505,6 +578,7 @@ final class SettingsStore: ObservableObject {
             activeWorkspaceID: activeWorkspaceID,
             providerID: providerID,
             model: model,
+            reasoningEffort: reasoningEffort,
             autoCommit: autoCommit,
             smartRouting: smartRouting,
             routingStrategy: routingStrategy,

@@ -21,7 +21,7 @@ ZIP, the VS Code extension, and relative SHA-256 checksums.
 
 - **Natural-language editing** — describe a change; the agent reads your repo,
   writes the edits, and stages them for your approval.
-- **Visual-first UI** — a Mac sidebar shell, a visual Command Center, icon-driven
+- **Visual-first UI** — a Mac top-bar shell, a visual Command Center, icon-driven
   controls, and side-by-side diffs. Designed to be read at a glance, not studied.
 - **Approval gate** — nothing is committed until you approve it. Every change
   shows a color-coded diff and a security risk scan.
@@ -76,7 +76,7 @@ xcodebuild -scheme WebsiteCommander -configuration Debug \
 
 ```
 WebsiteCommander/
-├── App/                 @main, window scene, sidebar root
+├── App/                 @main, window scene, shell root
 ├── DesignSystem/        Theme + reusable visual components
 ├── Models/              Workspace, repo, chat, pending-change, commit models
 ├── Services/            Keychain, settings store, GitHub client/auth,
@@ -97,7 +97,7 @@ require approval.
 - **Core loop** — connect → chat → stage → visual diff + security scan → approve &
   commit → live preview → history → open in VSCode.
 - **Multi-site, multi-account** — connect many sites, each bound to its own GitHub
-  account; a polished popover site switcher in the sidebar.
+  account; a polished popover site switcher in the top bar.
 - **Multi-provider AI** — OpenAI, Claude, Gemini, DeepSeek, Grok, Mistral, Copilot,
   custom endpoints, plus **on-device** inference via Apple's Foundation Models
   (macOS 26+, no network, no key). Smart auto-routing per task.

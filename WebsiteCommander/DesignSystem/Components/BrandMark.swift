@@ -174,6 +174,10 @@ struct SVGParser {
 func arcs(from p1: CGPoint, to p2: CGPoint, rx inRx: Double, ry inRy: Double,
                   phi deg: Double, large: Bool, sweep: Bool) -> [(CGPoint, CGPoint, CGPoint)] {
     var rx = inRx, ry = inRy
+    // A zero-length arc (identical endpoints) has no curve; return a degenerate
+    // segment instead of dividing by zero below, which would produce NaN and
+    // trap in Int(ceil(NaN)).
+    if p1.x == p2.x && p1.y == p2.y { return [(p1, p2, p2)] }
     let phi = deg * .pi / 180
     let cosPhi = cos(phi), sinPhi = sin(phi)
     let dx = (p1.x - p2.x) / 2, dy = (p1.y - p2.y) / 2
@@ -192,6 +196,7 @@ func arcs(from p1: CGPoint, to p2: CGPoint, rx inRx: Double, ry inRy: Double,
     let cy = sinPhi * cxp + cosPhi * cyp + (p1.y + p2.y)/2
     func ang(_ ux: Double, _ uy: Double, _ vx: Double, _ vy: Double) -> Double {
         let n = sqrt(ux*ux+uy*uy) * sqrt(vx*vx+vy*vy)
+        if n == 0 { return 0 }
         var c = (ux*vx+uy*vy)/n; c = max(-1, min(1, c))
         var a = acos(c)
         if ux*vy - uy*vx < 0 { a = -a }
@@ -227,9 +232,20 @@ func arcs(from p1: CGPoint, to p2: CGPoint, rx inRx: Double, ry inRy: Double,
 struct BrandMark: Shape {
     let id: BrandMarkID
 
+    /// Parsed geometry for each mark, computed once. `path(in:)` runs on every
+    /// layout pass of every rendered mark, so re-parsing the SVG string each
+    /// time is pure waste. The ops are value types, so sharing is safe.
+    private static let cachedOps: [BrandMarkID: [SVGOp]] = {
+        var dict: [BrandMarkID: [SVGOp]] = [:]
+        for id: BrandMarkID in [.openai, .anthropic, .gemini, .deepseek, .mistral, .copilot, .xai] {
+            var parser = SVGParser(id.officialPath)
+            dict[id] = parser.parse()
+        }
+        return dict
+    }()
+
     func path(in rect: CGRect) -> Path {
-        var parser = SVGParser(id.officialPath)
-        let ops = parser.parse()
+        let ops = Self.cachedOps[id] ?? []
         // The official marks are authored on a 24×24 viewBox.
         let sx = rect.width / 24, sy = rect.height / 24
         func t(_ p: CGPoint) -> CGPoint { CGPoint(x: rect.minX + p.x * sx, y: rect.minY + p.y * sy) }

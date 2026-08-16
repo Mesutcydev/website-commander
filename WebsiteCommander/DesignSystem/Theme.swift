@@ -48,7 +48,7 @@ enum Theme {
 
     /// Indigo. Reserved for primary actions, focus rings, active controls, and
     /// selection — never for borders, card fills, or body text.
-    static let accent = tone(0x5E5CE6, 0x8179FF)
+    static let accent = tone(0x5E5CE6, 0x6866E8)
     static let accentHover = tone(0x5150D8, 0x918AFF)
     static let accentPressed = tone(0x4645C5, 0x7068E8)
     static let accentSoft = tone(0xEEEFFF, 0x8179FF, darkAlpha: 0.14)
@@ -295,7 +295,7 @@ enum Theme {
     static let textPrimary = tone(0x181A20, 0xF4F5F7)
     static let secondaryText = tone(0x4E5561, 0xBBC1CB)
     static let tertiaryText = tone(0x7A818D, 0x858D99)
-    static let quaternaryText = tone(0x9299A4, 0x707782)
+    static let quaternaryText = tone(0x9299A4, 0x7E8694)
     static let disabledText = tone(0xADB2BB, 0x5F6671)
     static let textInverse = Color.white
 

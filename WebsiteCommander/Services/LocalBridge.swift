@@ -65,7 +65,9 @@ final class LocalBridge: ObservableObject {
         // Bind to a concrete loopback port (ephemeral `.any` on a pinned host is
         // unreliable). Try the preferred port, else a few random high ports.
         var candidates: [UInt16] = []
-        if preferredPort > 0 { candidates.append(UInt16(preferredPort)) }
+        // `UInt16(clamping:)` never traps, unlike `UInt16(preferredPort)`, which
+        // crashes when the free-form Settings field holds a value > 65535.
+        if preferredPort > 0 { candidates.append(UInt16(clamping: preferredPort)) }
         for _ in 0..<8 { candidates.append(UInt16.random(in: 49152...65000)) }
 
         for port in candidates {
@@ -130,6 +132,13 @@ final class LocalBridge: ObservableObject {
         connection.start(queue: .global(qos: .userInitiated))
         Task.detached { [weak self] in
             guard let self else { return }
+            defer {
+                // One request per connection; drop the finished connection so
+                // a long-lived bridge cannot accumulate completed sockets.
+                Task { @MainActor in
+                    self.connections.removeAll { $0 === connection }
+                }
+            }
             let authLine = await self.readLine(connection)
             guard let authLine, authLine.hasPrefix("AUTH "),
                   authLine.dropFirst(5).trimmingCharacters(in: .whitespaces) == token else {
@@ -215,7 +224,9 @@ final class LocalBridge: ObservableObject {
                 return ["ok": false, "error": error]
             }
             let brief = await makeDebugBrief(settings: settings, engine: engine)
-            let file = EditorBridge.writeBrief(brief, repoPath: brief.context.repoPath)
+            guard let file = EditorBridge.writeBrief(brief, repoPath: brief.context.repoPath) else {
+                return ["ok": false, "error": "Could not write the debug brief to disk."]
+            }
             let target = AgentTarget(rawValue: (req["for"] as? String) ?? "") ?? .codex
             return ["ok": true, "briefPath": file.path,
                     "prompt": brief.prompt(for: target, briefPath: file.path),
@@ -237,7 +248,7 @@ final class LocalBridge: ObservableObject {
         guard let workspace = settings.workspaces.first(where: {
             $0.name.lowercased() == site || $0.slug.lowercased() == site
         }) else {
-            return "no site named (rawSite)"
+            return "no site named \(rawSite)"
         }
         settings.setActive(workspace)
         return nil

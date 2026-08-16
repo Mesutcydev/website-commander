@@ -31,6 +31,9 @@ final class XPostImporter {
     }
 
     func importPost(from rawURL: String) async throws -> XPostImportDraft {
+        // The delegate-backed session is per-import; release it (and its
+        // delegate) when the import finishes, however it ends.
+        defer { session.finishTasksAndInvalidate() }
         guard !Task.isCancelled else { throw XPostImportError.cancelled }
         guard let inputURL = URL(string: rawURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw XPostImportError.invalidURL
@@ -49,7 +52,7 @@ final class XPostImporter {
             if let thumbnail = response.thumbnailURL { mediaURLs.append(thumbnail) }
             mediaURLs = Array(Set(mediaURLs.filter(Self.isDirectOfficialImageURL))).prefix(Self.maxImages).map { $0 }
 
-            let downloaded = await downloadImages(mediaURLs, sessionID: sessionID)
+            let downloaded = try await downloadImages(mediaURLs, sessionID: sessionID)
             var descriptors: [ImportedMediaAssetDescriptor] = []
             var seenHashes = Set<String>()
             var imageFailed = false
@@ -246,12 +249,15 @@ final class XPostImporter {
         case failure(Error)
     }
 
-    private func downloadImages(_ urls: [URL], sessionID: UUID) async -> [DownloadResult] {
+    private func downloadImages(_ urls: [URL], sessionID: UUID) async throws -> [DownloadResult] {
         guard !urls.isEmpty else { return [] }
         let budget = ImageDownloadBudget()
         var results: [DownloadResult] = []
         var index = 0
         while index < urls.count {
+            // Honour cancellation so a cancelled import stops fetching rather
+            // than draining the whole media batch first.
+            if Task.isCancelled { throw XPostImportError.cancelled }
             let batch = Array(urls[index..<min(index + 2, urls.count)])
             let batchResults = await withTaskGroup(of: DownloadResult.self, returning: [DownloadResult].self) { group in
                 for url in batch {
@@ -267,6 +273,7 @@ final class XPostImporter {
             }
             results.append(contentsOf: batchResults)
             index += batch.count
+            if Task.isCancelled { throw XPostImportError.cancelled }
         }
         return results
     }
@@ -278,6 +285,9 @@ final class XPostImporter {
         configuration.httpShouldSetCookies = false
         let session = URLSession(configuration: configuration,
                                   delegate: XImageRedirectDelegate(), delegateQueue: nil)
+        // One image = one session; release it (and its delegate) when the
+        // download finishes, however it ends.
+        defer { session.finishTasksAndInvalidate() }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("image/*", forHTTPHeaderField: "Accept")

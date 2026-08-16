@@ -321,9 +321,9 @@ struct DebugBriefSheet: View {
             lastAgentError: engine.lastError,
             stagedChanges: engine.pendingChanges.count)
         brief = b
-        briefPath = EditorBridge.writeBrief(b, repoPath: path).path
-        guiEditors = EditorBridge.detectedGUIEditors()
-        cliAgents = EditorBridge.detectedCLIAgents()
+        briefPath = EditorBridge.writeBrief(b, repoPath: path)?.path
+        guiEditors = await EditorBridge.detectedGUIEditors()
+        cliAgents = await EditorBridge.detectedCLIAgents()
     }
 
     private func openInGUI(_ editor: EditorBridge.GUIEditor, cli: String?) {

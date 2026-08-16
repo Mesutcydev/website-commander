@@ -6,6 +6,15 @@ import Foundation
 struct GeminiProvider: LLMProvider {
 
     let apiKey: String
+    /// Thinking level: token budgets on the 2.5 family, discrete levels on
+    /// Gemini 3 (which replaced budgets).
+    let effort: ReasoningEffort
+
+    init(apiKey: String, effort: ReasoningEffort = .default) {
+        self.apiKey = apiKey
+        self.effort = effort
+    }
+
     var id: String { "gemini" }
     var displayName: String { "Gemini" }
     var models: [String] {
@@ -20,9 +29,11 @@ struct GeminiProvider: LLMProvider {
     func complete(messages: [LLMMessage], tools: [ToolSpec], model: String) async throws -> LLMResponse {
         guard !apiKey.isEmpty else { throw LLMError.noKey(displayName) }
         let body = try requestBodyDict(messages: messages, tools: tools, model: model)
-        let url = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)"
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent"
         let data = try await OpenAICompatibleProvider.post(
-            url: url, headers: ["Content-Type": "application/json"], body: body)
+            url: url,
+            headers: ["Content-Type": "application/json", "x-goog-api-key": apiKey],
+            body: body)
         return try parse(data)
     }
 
@@ -32,13 +43,16 @@ struct GeminiProvider: LLMProvider {
                 onReasoning: @escaping (String) -> Void) async throws -> LLMResponse {
         guard !apiKey.isEmpty else { throw LLMError.noKey(displayName) }
         let body = try requestBodyDict(messages: messages, tools: tools, model: model)
-        let url = "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent?alt=sse&key=\(apiKey)"
+        let url = "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent?alt=sse"
         guard let endpoint = URL(string: url) else { throw LLMError.decoding("bad URL") }
         var req = URLRequest(url: endpoint)
         req.httpMethod = "POST"
         req.timeoutInterval = 240
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        // The API key travels in a header, never the URL query string, so it
+        // cannot leak into crash logs, proxy logs, or error text.
+        req.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (bytes, response) = try await URLSession.shared.bytes(for: req)
@@ -68,6 +82,13 @@ struct GeminiProvider: LLMProvider {
             guard !payload.isEmpty, payload != "[DONE]",
                   let data = payload.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+
+            // A mid-stream error frame must surface as a failure, not a
+            // confident "Done." with empty content.
+            if let errObj = obj["error"] as? [String: Any] {
+                let message = (errObj["message"] as? String) ?? "Gemini stream error"
+                throw LLMError.decoding("Gemini stream error: \(message)")
+            }
 
             if let u = obj["usageMetadata"] as? [String: Any] {
                 usage = TokenUsage(
@@ -126,7 +147,7 @@ struct GeminiProvider: LLMProvider {
     }
 
     /// Shared request body builder for complete + streamGenerateContent.
-    private func requestBodyDict(messages: [LLMMessage], tools: [ToolSpec], model: String) throws -> [String: Any] {
+    func requestBodyDict(messages: [LLMMessage], tools: [ToolSpec], model: String) throws -> [String: Any] {
         var system = ""
         var contents: [[String: Any]] = []
         var pendingResponses: [[String: Any]] = []
@@ -186,9 +207,24 @@ struct GeminiProvider: LLMProvider {
             body["systemInstruction"] = ["parts": [["text": system]]]
         }
         if ModelReasoningSupport.gemini(model) {
-            body["generationConfig"] = [
-                "thinkingConfig": ["includeThoughts": true]
-            ]
+            var thinkingConfig: [String: Any] = ["includeThoughts": true]
+            if model.lowercased().contains("gemini-3") {
+                // Gemini 3 exposes low/high levels; medium keeps the dynamic default.
+                switch effort {
+                case .low:  thinkingConfig["thinkingLevel"] = "low"
+                case .high: thinkingConfig["thinkingLevel"] = "high"
+                case .default, .medium: break
+                }
+            } else {
+                // 2.5 family: explicit token budgets.
+                switch effort {
+                case .low:    thinkingConfig["thinkingBudget"] = 1_024
+                case .medium: thinkingConfig["thinkingBudget"] = 8_192
+                case .high:   thinkingConfig["thinkingBudget"] = 24_576
+                case .default: break
+                }
+            }
+            body["generationConfig"] = ["thinkingConfig": thinkingConfig]
         }
         if !tools.isEmpty {
             body["tools"] = [[

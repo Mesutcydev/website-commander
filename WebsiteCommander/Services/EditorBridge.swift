@@ -61,74 +61,101 @@ enum EditorBridge {
     private static var cliCache: [String: String?] = [:]
 
     /// Resolve a CLI name to an absolute path, checking candidates then the shell.
-    static func resolveCLI(candidates: [String], names: [String]) -> String? {
+    static func resolveCLI(candidates: [String], names: [String]) async -> String? {
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             return path
         }
         for name in names {
             if let cached = cliCache[name] { if let cached { return cached } else { continue } }
-            let resolved = shellResolve(name)
+            let resolved = await shellResolve(name)
             cliCache[name] = resolved
             if let resolved { return resolved }
         }
         return nil
     }
 
-    private static func shellResolve(_ name: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", "command -v \(name)"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let path = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return (process.terminationStatus == 0 && !path.isEmpty) ? path : nil
-        } catch {
-            return nil
+    private static func shellResolve(_ name: String) async -> String? {
+        // Run the login-shell `command -v` off the main actor with a timeout, so
+        // a slow shell startup (sourcing user rc files) can no longer stall the
+        // debug-brief capture on the UI thread.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                process.arguments = ["-lc", "command -v \(name)"]
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                do {
+                    try process.run()
+                    let deadline = Date().addingTimeInterval(3.0)
+                    while process.isRunning && Date() < deadline {
+                        Thread.sleep(forTimeInterval: 0.05)
+                    }
+                    if process.isRunning {
+                        process.terminate()
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let path = String(data: data, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    continuation.resume(returning: (process.terminationStatus == 0 && !path.isEmpty) ? path : nil)
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
         }
     }
 
     /// GUI editors that are installed (CLI or .app bundle present).
-    static func detectedGUIEditors() -> [(editor: GUIEditor, cli: String?)] {
-        guiEditors.compactMap { editor in
-            let cli = resolveCLI(candidates: editor.cliCandidates, names: editor.cliNames)
+    static func detectedGUIEditors() async -> [(editor: GUIEditor, cli: String?)] {
+        var results: [(editor: GUIEditor, cli: String?)] = []
+        for editor in guiEditors {
+            let cli = await resolveCLI(candidates: editor.cliCandidates, names: editor.cliNames)
             let hasApp = editor.appBundles.contains {
                 FileManager.default.fileExists(atPath: "/Applications/\($0)")
             }
-            guard cli != nil || hasApp else { return nil }
-            return (editor, cli)
+            if cli != nil || hasApp {
+                results.append((editor, cli))
+            }
         }
+        return results
     }
 
     /// CLI agents that are installed on PATH.
-    static func detectedCLIAgents() -> [(agent: CLIAgent, cli: String)] {
-        cliAgents.compactMap { agent in
-            guard let cli = resolveCLI(candidates: [], names: agent.cliNames) else { return nil }
-            return (agent, cli)
+    static func detectedCLIAgents() async -> [(agent: CLIAgent, cli: String)] {
+        var results: [(agent: CLIAgent, cli: String)] = []
+        for agent in cliAgents {
+            if let cli = await resolveCLI(candidates: [], names: agent.cliNames) {
+                results.append((agent, cli))
+            }
         }
+        return results
     }
 
     // MARK: Writing the brief
 
-    /// Write the brief to the repo (preferred) or a temp folder. Returns the URL.
+    /// Write the brief to the repo (preferred) or a temp folder. Returns nil when
+    /// the write fails so callers can surface the error instead of opening a
+    /// nonexistent file.
     @discardableResult
-    static func writeBrief(_ brief: DebugBrief, repoPath: String?) -> URL {
+    static func writeBrief(_ brief: DebugBrief, repoPath: String?) -> URL? {
         let dir: URL
         if let repoPath, !repoPath.isEmpty {
             dir = URL(fileURLWithPath: repoPath).appendingPathComponent(".website-commander", isDirectory: true)
         } else {
             dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("WebsiteCommander", isDirectory: true)
         }
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let file = dir.appendingPathComponent("debug-brief.md")
-        let text = brief.markdown(briefPath: file.path)
-        try? text.write(to: file, atomically: true, encoding: .utf8)
-        return file
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent("debug-brief.md")
+            let text = brief.markdown(briefPath: file.path)
+            try text.write(to: file, atomically: true, encoding: .utf8)
+            return file
+        } catch {
+            return nil
+        }
     }
 
     // MARK: Opening
@@ -148,10 +175,11 @@ enum EditorBridge {
 
     /// Build the shell command that launches a CLI agent in the repo directory.
     static func terminalCommand(cli: String, repoPath: String?) -> String {
+        let quotedCLI = singleQuoted(cli)
         if let repoPath, !repoPath.isEmpty {
-            return "cd \(singleQuoted(repoPath)) && \(cli)"
+            return "cd \(singleQuoted(repoPath)) && \(quotedCLI)"
         }
-        return cli
+        return quotedCLI
     }
 
     /// Open a Terminal window running `command`. Used (with user confirmation) to
