@@ -8,7 +8,7 @@ options:
   generateEmptyDirectories: true
 settings:
   base:
-    MARKETING_VERSION: "1.1.0"
+    MARKETING_VERSION: "1.1.1"
     CURRENT_PROJECT_VERSION: "18"
     # Swift 5 language mode keeps the @MainActor / ObservableObject patterns simple
     # and avoids Swift 6 strict-concurrency churn across the ported engine code.
