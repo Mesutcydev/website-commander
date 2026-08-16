@@ -213,8 +213,8 @@ struct SettingsView: View {
     @State private var pendingDelete: SiteWorkspace? = nil
     @State private var showAssistantEditor = false
     @State private var deploymentSettingsRoute: DeploymentSettingsRoute?
-    @State private var deploymentSettingsPresented = false
     @State private var showRepositoryEditor = false
+    @State private var showModelPicker = false
 
     /// Yearly-vs-monthly saving, for the "switch to yearly" upsell. nil until
     /// both products load.
@@ -290,21 +290,39 @@ struct SettingsView: View {
             .sheet(item: $editingWorkspace) { ws in AddWorkspaceSheet(editingWorkspace: ws).environmentObject(engine) }
             .sheet(isPresented: $showGitHubHelp) { GitHubHelpView() }
             .sheet(isPresented: $showAssistantEditor) { assistantEditorSheet }
-            // isPresented-based push: the deprecated item-based variant can crash
-            // on current iOS when set from a button inside a presented sheet.
-            .navigationDestination(isPresented: $deploymentSettingsPresented) {
-                if let route = deploymentSettingsRoute {
+            // Settings itself is already a sheet. Pushing a navigation
+            // destination from a button inside that sheet crashes on current
+            // iOS. Present deployment as a nested sheet instead.
+            .sheet(item: $deploymentSettingsRoute) { route in
+                NavigationStack {
                     DeploymentSettingsView(
                         engine: engine,
                         workspaceID: route.workspaceID,
                         simpleMode: true
                     )
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { deploymentSettingsRoute = nil }
+                        }
+                    }
                 }
             }
-            .onChange(of: deploymentSettingsPresented) { _, presented in
-                if !presented { deploymentSettingsRoute = nil }
-            }
             .sheet(isPresented: $showRepositoryEditor) { repositoryEditorSheet }
+            .sheet(isPresented: $showModelPicker) {
+                ChatModelPickerSheet { provider, model in
+                    if !iap.isPro && AgentEngine.proOnlyProviderIDs.contains(provider.id) {
+                        paywallContext = .premiumModel
+                        showPaywall = true
+                        return
+                    }
+                    Haptics.tap()
+                    engine.smartRoutingEnabled = false
+                    engine.activeProviderID = provider.id
+                    engine.selectedModel = model
+                    Task { await engine.refreshActiveProviderModels() }
+                }
+                .environmentObject(engine)
+            }
             .confirmationDialog("Delete “\(pendingDelete?.name ?? "")”?",
                                 isPresented: Binding(get: { pendingDelete != nil },
                                                      set: { if !$0 { pendingDelete = nil } }),
@@ -459,7 +477,6 @@ struct SettingsView: View {
             return
         }
         deploymentSettingsRoute = DeploymentSettingsRoute(workspaceID: workspaceID)
-        deploymentSettingsPresented = true
     }
 
     // MARK: - Workspace switcher (multi-site)
@@ -691,25 +708,23 @@ struct SettingsView: View {
             }
         } else {
             SettingsDivider()
-            Picker("Model", selection: Binding(
-                get: { MainActor.assumeIsolated { engine.selectedModel } },
-                set: { newValue in MainActor.assumeIsolated { engine.selectedModel = newValue } }
-            )) {
-                ForEach(engine.availableModelsForActiveProvider, id: \.self) { m in
-                    HStack(spacing: 8) {
-                        Text(m)
-                        Spacer(minLength: 8)
-                        ModelCapabilityBadges(
-                            capabilities: engine.activeProvider.capabilities(for: m),
-                            size: 15
-                        )
-                    }
-                    .tag(m)
-                }
+            SettingsButton(
+                engine.selectedModel,
+                systemImage: "sparkles",
+                kind: .secondary
+            ) {
+                showModelPicker = true
             }
             .disabled(!iap.isPro && engine.isCurrentProviderProOnly)
             .id(engine.activeProviderID)
-            .padding(.vertical, 6)
+            if engine.activeModelCapability.supportsReasoningPreference {
+                Picker("Effort", selection: $engine.reasoningPreference) {
+                    ForEach(ReasoningPreference.allCases) { preference in
+                        Text(preference.rawValue).tag(preference)
+                    }
+                }
+                .padding(.vertical, 6)
+            }
 
             // Refresh only for providers with a remote catalog (the Apple FM models
             // are a fixed list, so the network-flavoured refresh would be a no-op).

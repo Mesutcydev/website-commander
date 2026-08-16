@@ -2114,9 +2114,15 @@ final class AgentEngine: ObservableObject {
             }
         }
 
+        let capability = ModelCapabilityRegistry.capability(providerID: provider.id, modelID: model)
+        if !capability.supportsReasoningPreference,
+           let instruction = reasoningPreference.instruction {
+            let insertionIndex = messages.first?.role == "system" ? 1 : 0
+            messages.insert(.system(instruction), at: insertionIndex)
+        }
+
         // Compact oldest history once the request would exceed the active
         // model's safe input budget. Additive: a no-op below that threshold.
-        let capability = ModelCapabilityRegistry.capability(providerID: provider.id, modelID: model)
         let prepared = ContextBudgeter.prepare(messages, capability: capability)
         if prepared.didCompact {
             contextCompactionNotice = "Earlier context was compacted from approximately "

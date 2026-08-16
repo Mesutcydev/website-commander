@@ -99,3 +99,21 @@ struct DeploymentCapabilities: Equatable {
         return .notConfigured
     }
 }
+
+/// Resolves the workspace a deployment screen should edit. After a site is
+/// added the workspaces array can lag the active workspace by a turn; falling
+/// back to `active` keeps the sheet from rendering the empty "No Workspace"
+/// state that previously crashed navigation from Settings.
+enum DeploymentSettingsLookup {
+    static func workspace(
+        id: UUID?,
+        workspaces: [SiteWorkspace],
+        active: SiteWorkspace?
+    ) -> SiteWorkspace? {
+        if let id {
+            if let match = workspaces.first(where: { $0.id == id }) { return match }
+            if active?.id == id { return active }
+        }
+        return active
+    }
+}

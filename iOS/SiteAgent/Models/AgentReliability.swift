@@ -20,6 +20,42 @@ enum ReasoningPreference: String, Codable, CaseIterable, Identifiable {
             return "Reason carefully before acting. Check assumptions, inspect dependencies, and verify edge cases before staging changes."
         }
     }
+
+    /// OpenAI / OpenCode Responses `reasoning.effort`. Automatic keeps the
+    /// previous medium default so Luna still round-trips encrypted reasoning.
+    var openaiEffort: String {
+        switch self {
+        case .automatic, .balanced: return "medium"
+        case .fast: return "low"
+        case .deep: return "high"
+        }
+    }
+
+    /// Anthropic extended-thinking budget. Automatic leaves thinking off.
+    var anthropicBudgetTokens: Int? {
+        switch self {
+        case .automatic: return nil
+        case .fast: return 1_024
+        case .balanced: return 5_000
+        case .deep: return 10_000
+        }
+    }
+
+    static var stored: ReasoningPreference {
+        ReasoningPreference(rawValue: UserDefaults.standard.string(forKey: "reasoningPreference") ?? "")
+            ?? .automatic
+    }
+}
+
+enum ChatModelCatalog {
+    /// Empty query returns the full list. A provider-name hit also returns the
+    /// full list so search can surface every model for that vendor.
+    static func matching(models: [String], providerName: String, query: String) -> [String] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return models }
+        if providerName.localizedStandardContains(trimmed) { return models }
+        return models.filter { $0.localizedStandardContains(trimmed) }
+    }
 }
 
 enum LaunchPreference: String, Codable, CaseIterable, Identifiable {

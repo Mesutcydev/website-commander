@@ -303,6 +303,92 @@ final class CoreLogicTests: XCTestCase {
         )
     }
 
+    func testDeploymentSettingsLookupFindsNewlyAddedWorkspaceEvenIfListIsStale() {
+        let workspace = SiteWorkspace(
+            name: "New Site",
+            gitOwner: "owner",
+            gitRepo: "repo",
+            gitBranch: "main",
+            techStack: .vanillaHTML,
+            deployment: .githubPages,
+            defaultModel: "claude-sonnet-4-6"
+        )
+
+        XCTAssertEqual(
+            DeploymentSettingsLookup.workspace(
+                id: workspace.id,
+                workspaces: [workspace],
+                active: workspace
+            )?.id,
+            workspace.id
+        )
+        XCTAssertEqual(
+            DeploymentSettingsLookup.workspace(
+                id: workspace.id,
+                workspaces: [],
+                active: workspace
+            )?.id,
+            workspace.id
+        )
+        XCTAssertEqual(
+            DeploymentSettingsLookup.workspace(
+                id: UUID(),
+                workspaces: [],
+                active: workspace
+            )?.id,
+            workspace.id
+        )
+        XCTAssertNil(
+            DeploymentSettingsLookup.workspace(
+                id: UUID(),
+                workspaces: [],
+                active: nil
+            )
+        )
+    }
+
+    func testReasoningPreferenceMapsToNativeProviderEffort() {
+        XCTAssertEqual(ReasoningPreference.automatic.openaiEffort, "medium")
+        XCTAssertEqual(ReasoningPreference.fast.openaiEffort, "low")
+        XCTAssertEqual(ReasoningPreference.balanced.openaiEffort, "medium")
+        XCTAssertEqual(ReasoningPreference.deep.openaiEffort, "high")
+        XCTAssertEqual(ReasoningPreference.fast.anthropicBudgetTokens, 1_024)
+        XCTAssertEqual(ReasoningPreference.balanced.anthropicBudgetTokens, 5_000)
+        XCTAssertEqual(ReasoningPreference.deep.anthropicBudgetTokens, 10_000)
+        XCTAssertNil(ReasoningPreference.automatic.anthropicBudgetTokens)
+    }
+
+    func testResponsesPayloadUsesRequestedEffort() {
+        let payload = OpenAICompatibleProvider.responsesPayload(
+            messages: [.user("hi")],
+            tools: [],
+            model: "gpt-5.4",
+            stream: false,
+            effort: .deep
+        )
+        let reasoning = payload["reasoning"] as? [String: Any]
+        XCTAssertEqual(reasoning?["effort"] as? String, "high")
+    }
+
+    func testChatModelCatalogSearchShowsAllModelsAndFilters() {
+        let models = ["gpt-5.5", "gpt-5.4", "o4-mini", "gpt-4.1-nano"]
+        XCTAssertEqual(
+            ChatModelCatalog.matching(models: models, providerName: "OpenAI", query: ""),
+            models
+        )
+        XCTAssertEqual(
+            ChatModelCatalog.matching(models: models, providerName: "OpenAI", query: "o4"),
+            ["o4-mini"]
+        )
+        XCTAssertEqual(
+            ChatModelCatalog.matching(models: models, providerName: "OpenAI", query: "open"),
+            models
+        )
+        XCTAssertTrue(
+            ChatModelCatalog.matching(models: models, providerName: "OpenAI", query: "claude").isEmpty
+        )
+    }
+
     func testRepositoryDeploymentConfigFindsProductionCustomDomain() {
         let wrangler = """
         name = "elemanlazimnet"

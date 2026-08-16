@@ -48,9 +48,11 @@ struct DeploymentSettingsView: View {
     @State private var pendingScrollTask: Task<Void, Never>?
 
     private var workspace: SiteWorkspace? {
-        guard let workspaceID else { return engine.activeWorkspace }
-        return engine.workspaces.first(where: { $0.id == workspaceID })
-            ?? (engine.activeWorkspace?.id == workspaceID ? engine.activeWorkspace : nil)
+        DeploymentSettingsLookup.workspace(
+            id: workspaceID,
+            workspaces: engine.workspaces,
+            active: engine.activeWorkspace
+        )
     }
 
     private func repo(for workspace: SiteWorkspace) -> RepoConfig {

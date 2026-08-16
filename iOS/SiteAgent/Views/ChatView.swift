@@ -485,7 +485,7 @@ struct ChatView: View {
                         .fill(engine.smartRoutingEnabled ? Theme.brand : Theme.ok)
                         .frame(width: 6, height: 6)
                 }
-                Text(engine.smartRoutingEnabled ? "Auto-Route" : engine.selectedModel)
+                Text(composerModelLabel)
                     .font(.mono(11, .medium))
                     .foregroundStyle(Theme.t2)
                     .lineLimit(1)
@@ -507,7 +507,15 @@ struct ChatView: View {
         .buttonStyle(.plain)
         .disabled(engine.state.isActive)
         .accessibilityLabel("Select AI model")
-        .accessibilityValue(engine.smartRoutingEnabled ? "Auto-Route" : engine.selectedModel)
+        .accessibilityValue(composerModelLabel)
+    }
+
+    private var composerModelLabel: String {
+        if engine.smartRoutingEnabled { return "Auto-Route" }
+        let model = engine.selectedModel
+        guard engine.activeModelCapability.supportsReasoningPreference,
+              engine.reasoningPreference != .automatic else { return model }
+        return "\(model) · \(engine.reasoningPreference.rawValue)"
     }
 
     private func select(provider: LLMProvider, model: String) {
@@ -2705,11 +2713,10 @@ struct ApprovalCard: View {
     }
 }
 
-private struct ChatModelPickerSheet: View {
+struct ChatModelPickerSheet: View {
     @EnvironmentObject private var engine: AgentEngine
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
-    @State private var expandedProviderIDs: Set<String> = []
 
     let onSelect: (LLMProvider, String) -> Void
 
@@ -2717,9 +2724,48 @@ private struct ChatModelPickerSheet: View {
         engine.availableProviders.contains { !matchingModels(for: $0).isEmpty }
     }
 
+    private var showsEffortPicker: Bool {
+        engine.activeModelCapability.supportsReasoningPreference && !engine.smartRoutingEnabled
+    }
+
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("Search models or providers", text: $searchText)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        if !searchText.isEmpty {
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Clear search")
+                        }
+                    }
+                }
+
+                if showsEffortPicker {
+                    Section {
+                        Picker("Effort", selection: $engine.reasoningPreference) {
+                            ForEach(ReasoningPreference.allCases) { preference in
+                                Text(preference.rawValue).tag(preference)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    } header: {
+                        Text("Effort")
+                    } footer: {
+                        Text("Controls native reasoning depth for this model.")
+                    }
+                }
+
                 if engine.smartRoutingEnabled && searchText.isEmpty {
                     Section("Routing") {
                         Button {
@@ -2731,18 +2777,10 @@ private struct ChatModelPickerSheet: View {
                     }
                 }
 
-                if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Section("Providers") {
-                        ForEach(engine.availableProviders, id: \.id) { provider in
-                            providerDisclosure(provider)
-                        }
-                    }
-                } else {
-                    ForEach(engine.availableProviders, id: \.id) { provider in
-                        let models = matchingModels(for: provider)
-                        if !models.isEmpty {
-                            modelSection(provider: provider, models: models)
-                        }
+                ForEach(engine.availableProviders, id: \.id) { provider in
+                    let models = matchingModels(for: provider)
+                    if !models.isEmpty {
+                        modelSection(provider: provider, models: models)
                     }
                 }
 
@@ -2776,22 +2814,20 @@ private struct ChatModelPickerSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .task {
+                await engine.refreshAllProviderModels()
+            }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large, .medium])
         .presentationDragIndicator(.visible)
-        .onAppear {
-            expandedProviderIDs.insert(engine.activeProviderID)
-        }
     }
 
     private func matchingModels(for provider: LLMProvider) -> [String] {
-        let models = engine.availableModels(for: provider)
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return models }
-        if provider.displayName.localizedStandardContains(query) {
-            return models
-        }
-        return models.filter { $0.localizedStandardContains(query) }
+        ChatModelCatalog.matching(
+            models: engine.availableModels(for: provider),
+            providerName: provider.displayName,
+            query: searchText
+        )
     }
 
     private func modelSection(provider: LLMProvider, models: [String]) -> some View {
@@ -2828,73 +2864,11 @@ private struct ChatModelPickerSheet: View {
             }
         } header: {
             Label(
-                provider.displayName,
+                "\(provider.displayName) · \(models.count)",
                 systemImage: provider.id == engine.activeProviderID
                     ? "checkmark.circle.fill"
                     : "circle"
             )
-        }
-    }
-
-    private func providerDisclosure(_ provider: LLMProvider) -> some View {
-        let models = engine.availableModels(for: provider)
-        return DisclosureGroup(
-            isExpanded: Binding(
-                get: { expandedProviderIDs.contains(provider.id) },
-                set: { isExpanded in
-                    if isExpanded {
-                        expandedProviderIDs.insert(provider.id)
-                    } else {
-                        expandedProviderIDs.remove(provider.id)
-                    }
-                }
-            )
-        ) {
-            ForEach(models, id: \.self) { model in
-                Button {
-                    onSelect(provider, model)
-                    dismiss()
-                } label: {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(model)
-                                .foregroundStyle(.primary)
-                                .lineLimit(2)
-                            if isSelected(provider: provider, model: model) {
-                                Text("Current model")
-                                    .font(.caption)
-                                    .foregroundStyle(Theme.ok)
-                            }
-                        }
-                        Spacer(minLength: 8)
-                        ModelCapabilityBadges(
-                            capabilities: engine.capabilities(for: provider, model: model),
-                            size: 15
-                        )
-                        if isSelected(provider: provider, model: model) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Theme.ok)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.leading, 8)
-            }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: provider.id == engine.activeProviderID
-                    ? "checkmark.circle.fill"
-                    : "circle")
-                    .foregroundStyle(provider.id == engine.activeProviderID ? Theme.ok : .secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(provider.displayName)
-                        .foregroundStyle(.primary)
-                    Text("\(models.count) models")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
     }
 

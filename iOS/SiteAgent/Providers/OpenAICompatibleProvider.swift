@@ -283,7 +283,8 @@ struct OpenAICompatibleProvider: LLMProvider {
     }
 
     static func responsesPayload(messages: [LLMMessage], tools: [ToolSpec], model: String,
-                                 stream: Bool) -> [String: Any] {
+                                 stream: Bool,
+                                 effort: ReasoningPreference = .stored) -> [String: Any] {
         var payload: [String: Any] = [
             "model": model,
             "input": encodeResponses(messages),
@@ -295,7 +296,7 @@ struct OpenAICompatibleProvider: LLMProvider {
             "include": ["reasoning.encrypted_content"],
             "max_output_tokens": 16_384,
             "reasoning": [
-                "effort": "medium",
+                "effort": effort.openaiEffort,
                 "summary": "auto"
             ],
             "text": ["verbosity": "low"],
