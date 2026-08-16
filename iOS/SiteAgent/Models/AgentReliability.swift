@@ -1,49 +1,190 @@
 import Foundation
 
-enum ReasoningPreference: String, Codable, CaseIterable, Identifiable {
+enum ReasoningPreference: String, Codable, Identifiable {
     case automatic = "Automatic"
+    case none = "none"
+    case minimal = "minimal"
+    case low = "low"
+    case medium = "medium"
+    case high = "high"
+    case max = "max"
+    case xhigh = "xhigh"
+    /// Legacy Settings labels. Still decoded from older installs / archives.
     case fast = "Fast"
     case balanced = "Balanced"
     case deep = "Deep"
 
     var id: String { rawValue }
 
-    var instruction: String? {
+    /// Official API / picker identity after collapsing legacy aliases.
+    var canonical: ReasoningPreference {
         switch self {
-        case .automatic:
-            return nil
-        case .fast:
-            return "Use a fast, direct approach. Avoid unnecessary exploration and prefer the smallest safe change."
-        case .balanced:
-            return "Balance speed with careful verification. Inspect the relevant code, then make the smallest well-supported change."
-        case .deep:
-            return "Reason carefully before acting. Check assumptions, inspect dependencies, and verify edge cases before staging changes."
+        case .fast: return .low
+        case .balanced: return .medium
+        case .deep: return .high
+        default: return self
         }
     }
 
-    /// OpenAI / OpenCode Responses `reasoning.effort`. Automatic keeps the
-    /// previous medium default so Luna still round-trips encrypted reasoning.
+    var officialID: String {
+        switch canonical {
+        case .automatic: return "automatic"
+        default: return canonical.rawValue
+        }
+    }
+
+    var displayLabel: String {
+        switch canonical {
+        case .automatic: return "Automatic"
+        case .none: return "None"
+        case .minimal: return "Minimal"
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        case .max: return "Max"
+        case .xhigh: return "Extra high"
+        default: return rawValue
+        }
+    }
+
+    var instruction: String? {
+        switch canonical {
+        case .automatic, .none:
+            return nil
+        case .minimal, .low:
+            return "Use a fast, direct approach. Avoid unnecessary exploration and prefer the smallest safe change."
+        case .medium:
+            return "Balance speed with careful verification. Inspect the relevant code, then make the smallest well-supported change."
+        case .high, .max, .xhigh:
+            return "Reason carefully before acting. Check assumptions, inspect dependencies, and verify edge cases before staging changes."
+        default:
+            return nil
+        }
+    }
+
+    /// OpenAI / OpenCode Responses `reasoning.effort` and chat `reasoning_effort`.
     var openaiEffort: String {
-        switch self {
-        case .automatic, .balanced: return "medium"
-        case .fast: return "low"
-        case .deep: return "high"
+        switch canonical {
+        case .none: return "none"
+        case .minimal: return "minimal"
+        case .low: return "low"
+        case .automatic, .medium: return "medium"
+        case .high, .max: return "high"
+        case .xhigh: return "xhigh"
+        default: return "medium"
+        }
+    }
+
+    /// Anthropic `effort` when the model publishes that parameter.
+    var anthropicEffort: String? {
+        switch canonical {
+        case .automatic, .none: return nil
+        case .minimal, .low: return "low"
+        case .medium: return "medium"
+        case .high: return "high"
+        case .max, .xhigh: return "max"
+        default: return nil
         }
     }
 
     /// Anthropic extended-thinking budget. Automatic leaves thinking off.
     var anthropicBudgetTokens: Int? {
-        switch self {
-        case .automatic: return nil
-        case .fast: return 1_024
-        case .balanced: return 5_000
-        case .deep: return 10_000
+        switch canonical {
+        case .automatic, .none: return nil
+        case .minimal, .low: return 1_024
+        case .medium: return 5_000
+        case .high: return 10_000
+        case .max, .xhigh: return 16_000
+        default: return nil
+        }
+    }
+
+    var geminiThinkingLevel: String? {
+        switch canonical {
+        case .automatic, .none: return nil
+        case .minimal: return "MINIMAL"
+        case .low: return "LOW"
+        case .medium: return "MEDIUM"
+        case .high, .max, .xhigh: return "HIGH"
+        default: return nil
         }
     }
 
     static var stored: ReasoningPreference {
         ReasoningPreference(rawValue: UserDefaults.standard.string(forKey: "reasoningPreference") ?? "")
             ?? .automatic
+    }
+}
+
+enum ReasoningEffortCatalog {
+    static func levels(providerID: String, modelID: String) -> [ReasoningPreference] {
+        let provider = providerID.lowercased()
+        let model = modelID.lowercased()
+
+        if isOpenAIFullScale(provider: provider, model: model) {
+            return [.none, .minimal, .low, .medium, .high, .xhigh]
+        }
+        if isOpenAIClassicScale(model: model) {
+            return [.low, .medium, .high]
+        }
+        if model.contains("claude") {
+            return [.automatic, .low, .medium, .high, .max]
+        }
+        if model.contains("gemini") {
+            return [.automatic, .minimal, .low, .medium, .high]
+        }
+        if model.contains("grok") {
+            return [.low, .high]
+        }
+        if model.contains("deepseek") && (model.contains("v4") || model.contains("reasoner")) {
+            return [.automatic, .low, .high]
+        }
+        if provider == "ondevice" || provider.hasPrefix("apple") {
+            return [.automatic, .low, .medium, .high]
+        }
+        return [.automatic, .low, .medium, .high]
+    }
+
+    static func resolved(
+        _ stored: ReasoningPreference,
+        providerID: String,
+        modelID: String
+    ) -> ReasoningPreference {
+        let options = levels(providerID: providerID, modelID: modelID)
+        let canonical = stored.canonical
+        if options.contains(canonical) { return canonical }
+        switch canonical {
+        case .none, .minimal:
+            if options.contains(.low) { return .low }
+        case .high, .max, .xhigh:
+            if options.contains(.max) { return .max }
+            if options.contains(.high) { return .high }
+        default:
+            break
+        }
+        if options.contains(.medium) { return .medium }
+        if options.contains(.automatic) { return .automatic }
+        return options.first ?? .automatic
+    }
+
+    static func isOpenAIFullScale(provider: String, model: String) -> Bool {
+        let id = bareModelID(model)
+        if id == "gpt-5.6-luna" || id.hasPrefix("gpt-5.6") { return true }
+        if id.hasPrefix("gpt-5.5") || id.hasPrefix("gpt-5.4") || id.hasPrefix("gpt-5.2") { return true }
+        if id.hasPrefix("gpt-5.1") || id.hasPrefix("gpt-5") { return true }
+        if provider == "opencode" && id.hasPrefix("gpt-") { return true }
+        return false
+    }
+
+    private static func isOpenAIClassicScale(model: String) -> Bool {
+        let id = bareModelID(model)
+        return id.hasPrefix("o1") || id.hasPrefix("o3") || id.hasPrefix("o4")
+    }
+
+    private static func bareModelID(_ model: String) -> String {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let slash = trimmed.lastIndex(of: "/") else { return trimmed }
+        return String(trimmed[trimmed.index(after: slash)...])
     }
 }
 

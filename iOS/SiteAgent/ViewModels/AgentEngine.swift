@@ -2115,8 +2115,8 @@ final class AgentEngine: ObservableObject {
         }
 
         let capability = ModelCapabilityRegistry.capability(providerID: provider.id, modelID: model)
-        if !capability.supportsReasoningPreference,
-           let instruction = reasoningPreference.instruction {
+        let effort = ReasoningEffortCatalog.resolved(reasoningPreference, providerID: provider.id, modelID: model)
+        if let instruction = effort.instruction {
             let insertionIndex = messages.first?.role == "system" ? 1 : 0
             messages.insert(.system(instruction), at: insertionIndex)
         }

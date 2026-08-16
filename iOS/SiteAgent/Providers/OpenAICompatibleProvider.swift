@@ -70,6 +70,7 @@ struct OpenAICompatibleProvider: LLMProvider {
             }
             payload["tool_choice"] = "auto"
         }
+        Self.applyChatReasoning(&payload, providerID: id, model: model)
         var lastAuthError: LLMError?
         for endpoint in requestBaseURLs {
             let req = try Self.makeRequest(
@@ -144,6 +145,7 @@ struct OpenAICompatibleProvider: LLMProvider {
             }
             payload["tool_choice"] = "auto"
         }
+        Self.applyChatReasoning(&payload, providerID: id, model: model)
         var lastAuthError: LLMError?
         for endpoint in requestBaseURLs {
             let req = try Self.makeRequest(
@@ -296,7 +298,7 @@ struct OpenAICompatibleProvider: LLMProvider {
             "include": ["reasoning.encrypted_content"],
             "max_output_tokens": 16_384,
             "reasoning": [
-                "effort": effort.openaiEffort,
+                "effort": ReasoningEffortCatalog.resolved(effort, providerID: "openai", modelID: model).openaiEffort,
                 "summary": "auto"
             ],
             "text": ["verbosity": "low"],
@@ -1111,6 +1113,28 @@ struct OpenAICompatibleProvider: LLMProvider {
             SiteAgentURL.constant("https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
             SiteAgentURL.constant("https://dashscope.aliyuncs.com/compatible-mode/v1")
         ]
+    }
+
+    /// Chat Completions reasoning controls. Responses API uses `reasoning.effort`
+    /// instead; this covers OpenAI GPT-5, o-series, Grok, and DeepSeek V4.
+    static func applyChatReasoning(_ payload: inout [String: Any], providerID: String, model: String) {
+        let effort = ReasoningEffortCatalog.resolved(.stored, providerID: providerID, modelID: model)
+        let lower = model.lowercased()
+        if ReasoningEffortCatalog.isOpenAIFullScale(provider: providerID, model: model)
+            || lower.hasPrefix("o1") || lower.hasPrefix("o3") || lower.hasPrefix("o4") {
+            payload["reasoning_effort"] = effort.openaiEffort
+            return
+        }
+        if lower.contains("grok") {
+            payload["reasoning_effort"] = effort.canonical == .high || effort.canonical == .xhigh || effort.canonical == .max
+                ? "high" : "low"
+            return
+        }
+        if lower.contains("deepseek"), lower.contains("v4") || lower.contains("reasoner") {
+            if effort.canonical != .automatic, effort.canonical != .none {
+                payload["thinking"] = ["type": "enabled"]
+            }
+        }
     }
 
     /// Keeps text/vision chat models, drops the non-conversational entries every

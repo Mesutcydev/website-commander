@@ -513,9 +513,13 @@ struct ChatView: View {
     private var composerModelLabel: String {
         if engine.smartRoutingEnabled { return "Auto-Route" }
         let model = engine.selectedModel
-        guard engine.activeModelCapability.supportsReasoningPreference,
-              engine.reasoningPreference != .automatic else { return model }
-        return "\(model) · \(engine.reasoningPreference.rawValue)"
+        let effort = ReasoningEffortCatalog.resolved(
+            engine.reasoningPreference,
+            providerID: engine.activeProviderID,
+            modelID: model
+        )
+        if effort == .automatic || effort == .none { return model }
+        return "\(model) · \(effort.displayLabel)"
     }
 
     private func select(provider: LLMProvider, model: String) {
@@ -528,6 +532,11 @@ struct ChatView: View {
         engine.smartRoutingEnabled = false
         engine.activeProviderID = provider.id
         engine.selectedModel = model
+        engine.reasoningPreference = ReasoningEffortCatalog.resolved(
+            engine.reasoningPreference,
+            providerID: provider.id,
+            modelID: model
+        )
         Task { await engine.refreshActiveProviderModels() }
     }
 
@@ -2724,78 +2733,59 @@ struct ChatModelPickerSheet: View {
         engine.availableProviders.contains { !matchingModels(for: $0).isEmpty }
     }
 
-    private var showsEffortPicker: Bool {
-        engine.activeModelCapability.supportsReasoningPreference && !engine.smartRoutingEnabled
+    private var officialEffortLevels: [ReasoningPreference] {
+        ReasoningEffortCatalog.levels(
+            providerID: engine.activeProviderID,
+            modelID: engine.selectedModel
+        )
+    }
+
+    private var resolvedEffort: ReasoningPreference {
+        ReasoningEffortCatalog.resolved(
+            engine.reasoningPreference,
+            providerID: engine.activeProviderID,
+            modelID: engine.selectedModel
+        )
     }
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                        TextField("Search models or providers", text: $searchText)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        if !searchText.isEmpty {
-                            Button {
-                                searchText = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Clear search")
-                        }
-                    }
-                }
+            ScrollView {
+                VStack(spacing: 20) {
+                    searchField
 
-                if showsEffortPicker {
-                    Section {
-                        Picker("Effort", selection: $engine.reasoningPreference) {
-                            ForEach(ReasoningPreference.allCases) { preference in
-                                Text(preference.rawValue).tag(preference)
+                    if !engine.smartRoutingEnabled {
+                        effortSection
+                    }
+
+                    if engine.smartRoutingEnabled && searchText.isEmpty {
+                        SettingsSection("Routing") {
+                            SettingsButton("Use a specific model", systemImage: "slider.horizontal.3") {
+                                engine.smartRoutingEnabled = false
                             }
                         }
-                        .pickerStyle(.menu)
-                    } header: {
-                        Text("Effort")
-                    } footer: {
-                        Text("Controls native reasoning depth for this model.")
                     }
-                }
 
-                if engine.smartRoutingEnabled && searchText.isEmpty {
-                    Section("Routing") {
-                        Button {
-                            engine.smartRoutingEnabled = false
-                            Haptics.tap()
-                        } label: {
-                            Label("Use a specific model", systemImage: "slider.horizontal.3")
+                    ForEach(engine.availableProviders, id: \.id) { provider in
+                        let models = matchingModels(for: provider)
+                        if !models.isEmpty {
+                            providerCard(provider, models: models)
                         }
                     }
-                }
 
-                ForEach(engine.availableProviders, id: \.id) { provider in
-                    let models = matchingModels(for: provider)
-                    if !models.isEmpty {
-                        modelSection(provider: provider, models: models)
+                    if !hasMatches {
+                        ContentUnavailableView.search(text: searchText)
+                            .padding(.top, 32)
                     }
                 }
-
-                if !hasMatches {
-                    ContentUnavailableView.search(text: searchText)
-                        .listRowBackground(Color.clear)
-                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .readableWidth(640)
             }
+            .scrollDismissesKeyboard(.interactively)
+            .commandBackground()
             .navigationTitle("Choose Model")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(
-                text: $searchText,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search models or providers"
-            )
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -2818,30 +2808,83 @@ struct ChatModelPickerSheet: View {
                 await engine.refreshAllProviderModels()
             }
         }
-        .presentationDetents([.large, .medium])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
 
-    private func matchingModels(for provider: LLMProvider) -> [String] {
-        ChatModelCatalog.matching(
-            models: engine.availableModels(for: provider),
-            providerName: provider.displayName,
-            query: searchText
-        )
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(Theme.t3)
+            TextField("Search models or providers", text: $searchText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.ui(15))
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(Theme.t3)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .adaptiveGlassSurface(.composerField, cornerRadius: 20, classicFill: Theme.chip)
     }
 
-    private func modelSection(provider: LLMProvider, models: [String]) -> some View {
-        Section {
-            ForEach(models, id: \.self) { model in
+    private var effortSection: some View {
+        SettingsSection("Effort", footer: "Official reasoning levels for \(engine.selectedModel).") {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                ForEach(officialEffortLevels, id: \.id) { preference in
+                    let selected = resolvedEffort == preference.canonical
+                    Button {
+                        Haptics.tap()
+                        engine.reasoningPreference = preference
+                    } label: {
+                        Text(preference.displayLabel)
+                            .font(.ui(13, selected ? .semibold : .medium))
+                            .foregroundStyle(selected ? Theme.brand : Theme.t1)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .adaptiveGlassSurface(
+                                .capsule,
+                                cornerRadius: 14,
+                                accentReflection: selected ? Theme.brand : nil,
+                                classicFill: selected ? Theme.brand.opacity(0.12) : Theme.chip
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+            .padding(.vertical, 10)
+        }
+    }
+
+    private func providerCard(_ provider: LLMProvider, models: [String]) -> some View {
+        let active = provider.id == engine.activeProviderID
+        return SettingsSection("\(provider.displayName) · \(models.count)") {
+            ForEach(Array(models.enumerated()), id: \.element) { index, model in
+                if index > 0 { SettingsDivider() }
                 Button {
                     onSelect(provider, model)
                     dismiss()
                 } label: {
                     HStack(spacing: 10) {
+                        Image(systemName: isSelected(provider: provider, model: model)
+                              ? "checkmark.circle.fill"
+                              : "circle")
+                            .foregroundStyle(isSelected(provider: provider, model: model) ? Theme.ok : Theme.t3)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(model)
-                                .foregroundStyle(.primary)
+                                .font(.ui(15, isSelected(provider: provider, model: model) ? .semibold : .regular))
+                                .foregroundStyle(Theme.t1)
                                 .lineLimit(2)
+                                .multilineTextAlignment(.leading)
                             if isSelected(provider: provider, model: model) {
                                 Text("Current model")
                                     .font(.caption)
@@ -2853,23 +2896,29 @@ struct ChatModelPickerSheet: View {
                             capabilities: engine.capabilities(for: provider, model: model),
                             size: 15
                         )
-                        if isSelected(provider: provider, model: model) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Theme.ok)
-                        }
                     }
+                    .padding(.vertical, 11)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
-        } header: {
-            Label(
-                "\(provider.displayName) · \(models.count)",
-                systemImage: provider.id == engine.activeProviderID
-                    ? "checkmark.circle.fill"
-                    : "circle"
-            )
         }
+        .overlay(alignment: .topTrailing) {
+            if active {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.ok)
+                    .padding(.trailing, 4)
+            }
+        }
+    }
+
+    private func matchingModels(for provider: LLMProvider) -> [String] {
+        ChatModelCatalog.matching(
+            models: engine.availableModels(for: provider),
+            providerName: provider.displayName,
+            query: searchText
+        )
     }
 
     private func isSelected(provider: LLMProvider, model: String) -> Bool {

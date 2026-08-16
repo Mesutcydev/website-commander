@@ -266,16 +266,33 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                workspaceScrollContent
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
-                    .readableWidth(640)
+            Group {
+                if let route = deploymentSettingsRoute {
+                    // In-place swap. A nested sheet or navigationDestination from
+                    // this already-presented Settings sheet crashes on current iOS.
+                    DeploymentSettingsView(
+                        engine: engine,
+                        workspaceID: route.workspaceID,
+                        simpleMode: true
+                    )
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Back") { deploymentSettingsRoute = nil }
+                        }
+                    }
+                } else {
+                    ScrollView {
+                        workspaceScrollContent
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .readableWidth(640)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .commandBackground()
+                    .navigationTitle("Workspace")
+                    .accessibilityLabel("Settings")
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .commandBackground()
-            .navigationTitle("Workspace")
-            .accessibilityLabel("Settings")
             .onAppear {
                 loadSecrets()
                 reconcileProviderAccess()
@@ -290,23 +307,6 @@ struct SettingsView: View {
             .sheet(item: $editingWorkspace) { ws in AddWorkspaceSheet(editingWorkspace: ws).environmentObject(engine) }
             .sheet(isPresented: $showGitHubHelp) { GitHubHelpView() }
             .sheet(isPresented: $showAssistantEditor) { assistantEditorSheet }
-            // Settings itself is already a sheet. Pushing a navigation
-            // destination from a button inside that sheet crashes on current
-            // iOS. Present deployment as a nested sheet instead.
-            .sheet(item: $deploymentSettingsRoute) { route in
-                NavigationStack {
-                    DeploymentSettingsView(
-                        engine: engine,
-                        workspaceID: route.workspaceID,
-                        simpleMode: true
-                    )
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { deploymentSettingsRoute = nil }
-                        }
-                    }
-                }
-            }
             .sheet(isPresented: $showRepositoryEditor) { repositoryEditorSheet }
             .sheet(isPresented: $showModelPicker) {
                 ChatModelPickerSheet { provider, model in
@@ -319,6 +319,11 @@ struct SettingsView: View {
                     engine.smartRoutingEnabled = false
                     engine.activeProviderID = provider.id
                     engine.selectedModel = model
+                    engine.reasoningPreference = ReasoningEffortCatalog.resolved(
+                        engine.reasoningPreference,
+                        providerID: provider.id,
+                        modelID: model
+                    )
                     Task { await engine.refreshActiveProviderModels() }
                 }
                 .environmentObject(engine)
@@ -717,10 +722,10 @@ struct SettingsView: View {
             }
             .disabled(!iap.isPro && engine.isCurrentProviderProOnly)
             .id(engine.activeProviderID)
-            if engine.activeModelCapability.supportsReasoningPreference {
-                Picker("Effort", selection: $engine.reasoningPreference) {
-                    ForEach(ReasoningPreference.allCases) { preference in
-                        Text(preference.rawValue).tag(preference)
+            if engine.activeModelCapability.supportsReasoningPreference || !officialSettingsEffortLevels.isEmpty {
+                Picker("Effort", selection: effortSelection) {
+                    ForEach(officialSettingsEffortLevels, id: \.id) { preference in
+                        Text(preference.displayLabel).tag(preference)
                     }
                 }
                 .padding(.vertical, 6)
@@ -1248,15 +1253,13 @@ struct SettingsView: View {
             SettingsDivider()
             Toggle("Haptic Feedback", isOn: $engine.hapticsEnabled).padding(.vertical, 8)
             SettingsDivider()
-            Picker("Agent effort", selection: $engine.reasoningPreference) {
-                ForEach(ReasoningPreference.allCases) { preference in
-                    Text(preference.rawValue).tag(preference)
+            Picker("Agent effort", selection: effortSelection) {
+                ForEach(officialSettingsEffortLevels, id: \.id) { preference in
+                    Text(preference.displayLabel).tag(preference)
                 }
             }
             .padding(.vertical, 6)
-            Text(engine.activeModelCapability.supportsReasoningPreference
-                 ? "Controls how thoroughly the agent explores and verifies work in this session."
-                 : "This model has no known native reasoning control; Website Commander applies the preference as an agent instruction.")
+            Text("Official reasoning levels for the current model. Website Commander sends the provider’s native parameter when one exists.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1428,6 +1431,30 @@ struct SettingsView: View {
     }
 
     // MARK: - Logic
+
+    private var officialSettingsEffortLevels: [ReasoningPreference] {
+        ReasoningEffortCatalog.levels(
+            providerID: engine.activeProviderID,
+            modelID: engine.selectedModel
+        )
+    }
+
+    private var effortSelection: Binding<ReasoningPreference> {
+        Binding(
+            get: {
+                MainActor.assumeIsolated {
+                    ReasoningEffortCatalog.resolved(
+                        engine.reasoningPreference,
+                        providerID: engine.activeProviderID,
+                        modelID: engine.selectedModel
+                    )
+                }
+            },
+            set: { newValue in
+                MainActor.assumeIsolated { engine.reasoningPreference = newValue }
+            }
+        )
+    }
 
     private func loadSecrets() {
         githubToken = Keychain.get(Keychain.githubToken) ?? ""

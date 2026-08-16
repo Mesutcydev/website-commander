@@ -46,6 +46,11 @@ struct GeminiProvider: LLMProvider {
                 ["functionDeclarations": tools.map { convertToolSpec($0) }]
             ]
         }
+        if let thinking = ReasoningEffortCatalog.resolved(.stored, providerID: "gemini", modelID: model).geminiThinkingLevel {
+            payload["generationConfig"] = [
+                "thinkingConfig": ["thinkingLevel": thinking]
+            ]
+        }
         
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
@@ -84,6 +89,11 @@ struct GeminiProvider: LLMProvider {
         if !tools.isEmpty {
             payload["tools"] = [
                 ["functionDeclarations": tools.map { convertToolSpec($0) }]
+            ]
+        }
+        if let thinking = ReasoningEffortCatalog.resolved(.stored, providerID: "gemini", modelID: model).geminiThinkingLevel {
+            payload["generationConfig"] = [
+                "thinkingConfig": ["thinkingLevel": thinking]
             ]
         }
         

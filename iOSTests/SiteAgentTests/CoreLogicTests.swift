@@ -350,24 +350,64 @@ final class CoreLogicTests: XCTestCase {
     func testReasoningPreferenceMapsToNativeProviderEffort() {
         XCTAssertEqual(ReasoningPreference.automatic.openaiEffort, "medium")
         XCTAssertEqual(ReasoningPreference.fast.openaiEffort, "low")
+        XCTAssertEqual(ReasoningPreference.low.openaiEffort, "low")
         XCTAssertEqual(ReasoningPreference.balanced.openaiEffort, "medium")
+        XCTAssertEqual(ReasoningPreference.medium.openaiEffort, "medium")
         XCTAssertEqual(ReasoningPreference.deep.openaiEffort, "high")
+        XCTAssertEqual(ReasoningPreference.high.openaiEffort, "high")
+        XCTAssertEqual(ReasoningPreference.none.openaiEffort, "none")
+        XCTAssertEqual(ReasoningPreference.minimal.openaiEffort, "minimal")
+        XCTAssertEqual(ReasoningPreference.xhigh.openaiEffort, "xhigh")
         XCTAssertEqual(ReasoningPreference.fast.anthropicBudgetTokens, 1_024)
         XCTAssertEqual(ReasoningPreference.balanced.anthropicBudgetTokens, 5_000)
         XCTAssertEqual(ReasoningPreference.deep.anthropicBudgetTokens, 10_000)
         XCTAssertNil(ReasoningPreference.automatic.anthropicBudgetTokens)
+        XCTAssertEqual(ReasoningPreference.fast.canonical, .low)
+        XCTAssertEqual(ReasoningPreference.balanced.canonical, .medium)
+        XCTAssertEqual(ReasoningPreference.deep.canonical, .high)
+    }
+
+    func testOfficialEffortCatalogUsesProviderNativeScales() {
+        XCTAssertEqual(
+            ReasoningEffortCatalog.levels(providerID: "opencode", modelID: "gpt-5.6-luna").map(\.officialID),
+            ["none", "minimal", "low", "medium", "high", "xhigh"]
+        )
+        XCTAssertEqual(
+            ReasoningEffortCatalog.levels(providerID: "openai", modelID: "gpt-5.4").map(\.officialID),
+            ["none", "minimal", "low", "medium", "high", "xhigh"]
+        )
+        XCTAssertEqual(
+            ReasoningEffortCatalog.levels(providerID: "openai", modelID: "o4-mini").map(\.officialID),
+            ["low", "medium", "high"]
+        )
+        XCTAssertEqual(
+            ReasoningEffortCatalog.levels(providerID: "anthropic", modelID: "claude-sonnet-4-6").map(\.officialID),
+            ["automatic", "low", "medium", "high", "max"]
+        )
+        XCTAssertEqual(
+            ReasoningEffortCatalog.levels(providerID: "gemini", modelID: "gemini-3.5-flash").map(\.officialID),
+            ["automatic", "minimal", "low", "medium", "high"]
+        )
+        XCTAssertEqual(
+            ReasoningEffortCatalog.resolved(.xhigh, providerID: "anthropic", modelID: "claude-sonnet-4-6"),
+            .max
+        )
+        XCTAssertEqual(
+            ReasoningEffortCatalog.resolved(.fast, providerID: "opencode", modelID: "gpt-5.6-luna"),
+            .low
+        )
     }
 
     func testResponsesPayloadUsesRequestedEffort() {
         let payload = OpenAICompatibleProvider.responsesPayload(
             messages: [.user("hi")],
             tools: [],
-            model: "gpt-5.4",
+            model: "gpt-5.6-luna",
             stream: false,
-            effort: .deep
+            effort: .xhigh
         )
         let reasoning = payload["reasoning"] as? [String: Any]
-        XCTAssertEqual(reasoning?["effort"] as? String, "high")
+        XCTAssertEqual(reasoning?["effort"] as? String, "xhigh")
     }
 
     func testChatModelCatalogSearchShowsAllModelsAndFilters() {

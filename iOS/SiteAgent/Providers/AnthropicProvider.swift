@@ -48,6 +48,9 @@ struct AnthropicProvider: LLMProvider {
         if !tools.isEmpty {
             payload["tools"] = tools.map { ["name": $0.name, "description": $0.description, "input_schema": $0.parameters] }
         }
+        if let effort = ReasoningEffortCatalog.resolved(.stored, providerID: "anthropic", modelID: model).anthropicEffort {
+            payload["effort"] = effort
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, resp) = try await URLSession.shared.data(for: req)
@@ -88,6 +91,9 @@ struct AnthropicProvider: LLMProvider {
         if !system.isEmpty { payload["system"] = system }
         if !tools.isEmpty {
             payload["tools"] = tools.map { ["name": $0.name, "description": $0.description, "input_schema": $0.parameters] }
+        }
+        if let effort = ReasoningEffortCatalog.resolved(.stored, providerID: "anthropic", modelID: model).anthropicEffort {
+            payload["effort"] = effort
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
