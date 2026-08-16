@@ -301,17 +301,28 @@ struct AddWorkspaceSheet: View {
             HStack(spacing: 5) {
                 Text("Accent color").font(.caption).foregroundStyle(.secondary)
                 HelpButton(title: "Accent color",
-                           message: "A color that identifies this site in the switcher and dashboard. Pick one, or leave Auto to derive a stable color from the site name.")
+                           message: "A color that identifies this site in the switcher and dashboard. Colorless keeps the neutral glass look; Auto derives a stable color from the site name.")
             }
             HStack(spacing: 8) {
-                // Auto chip
+                // Colorless (default)
                 Button { accentHex = nil } label: {
+                    Text("Colorless")
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(accentHex == nil ? AnyShapeStyle(Color.primary.opacity(0.16)) : AnyShapeStyle(Color.primary.opacity(0.08)),
+                                    in: Capsule())
+                        .overlay(accentHex == nil ? Capsule().strokeBorder(Color.primary.opacity(0.35)) : nil)
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
+                // Auto chip (name-derived)
+                Button { accentHex = SiteWorkspace.autoAccent } label: {
                     Text("Auto")
                         .font(.caption.weight(.medium))
                         .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(accentHex == nil ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Color.primary.opacity(0.08)),
+                        .background(accentHex == SiteWorkspace.autoAccent ? AnyShapeStyle(Theme.brandGradient) : AnyShapeStyle(Color.primary.opacity(0.08)),
                                     in: Capsule())
-                        .foregroundStyle(accentHex == nil ? .white : .primary)
+                        .foregroundStyle(accentHex == SiteWorkspace.autoAccent ? .white : .primary)
                 }
                 .buttonStyle(.plain)
                 ForEach(SiteWorkspace.accentPalette, id: \.self) { hex in

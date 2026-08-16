@@ -11,12 +11,22 @@ extension SiteWorkspace {
         "#BF5AF2", "#FF375F", "#64D2FF", "#FFD60A", "#AC8E68"
     ]
 
-    /// The site's accent: the explicit hex if set, else a stable pick from the
-    /// palette derived from the name (so each site is visually distinct).
+    /// Sentinel `accentHex` value for the name-derived ("Auto") color. A plain
+    /// `nil` means colorless — the neutral glass default.
+    static let autoAccent = "auto"
+
+    /// The site's accent. Colorless (`nil`, the default) resolves to a neutral
+    /// glass tone; `autoAccent` derives a stable palette pick from the site
+    /// name; anything else is an explicit `#RRGGBB` hex.
     var accentColor: Color {
-        if let hex = accentHex, let c = Color(hex: hex) { return c }
-        let idx = Self.stableIndex(for: name)
-        return Color(hex: Self.accentPalette[idx]) ?? Theme.accent
+        if let hex = accentHex {
+            if hex == Self.autoAccent {
+                let idx = Self.stableIndex(for: name)
+                return Color(hex: Self.accentPalette[idx]) ?? Theme.accent
+            }
+            if let c = Color(hex: hex) { return c }
+        }
+        return Theme.secondaryText
     }
 
     /// A deterministic (per-process-independent) FNV-1a hash so a site's derived

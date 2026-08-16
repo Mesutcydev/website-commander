@@ -394,7 +394,7 @@ struct WorkspaceCard: View {
             HStack(spacing: Theme.Space.s) {
                 Image(systemName: workspace.techStack.icon)
                     .font(.system(size: Theme.IconSize.large, weight: .medium))
-                    .foregroundStyle(isActive ? Theme.accent : Theme.secondaryText)
+                    .foregroundStyle(isActive ? workspace.accentColor : Theme.secondaryText)
                     .frame(width: Theme.IconSize.tile, height: Theme.IconSize.tile)
                     .background(Theme.secondarySurface,
                                 in: RoundedRectangle(cornerRadius: Theme.Radius.icon, style: .continuous))
